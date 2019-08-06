@@ -6,8 +6,8 @@ run: a.out
 clean:
 	-rm *.o a.out
 
-coro.o: coro.asm
+%.o: %.asm
 	nasm -fmacho64 $^
 
-a.out: main.o coro.o
+a.out: main.o tina.o
 	cc $^
