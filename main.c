@@ -25,8 +25,9 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 int main(int argc, const char *argv[]){
 	tina_err = err;
 	
-	void* buffer = malloc(1024*1024);
-	tina* coro = tina_init(buffer, 1024*1024, coro_body, NULL);
+	size_t size = 1024*1024 - 1;
+	void* buffer = malloc(size);
+	tina* coro = tina_init(buffer, size, coro_body, NULL);
 	
 	while(tina_resume(coro, 0)){}
 	printf("Success!\n");

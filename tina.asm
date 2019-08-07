@@ -54,8 +54,9 @@ _tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
 	; coro->ctx = ctx
 	mov [%$coro + 0], %$ctx
 	
-	; Calculate stack top.
+	; Calculate and align the stack top.
 	lea rsp, [%$coro + %$size]
+	and rsp, ~0xF
 	; Push tina_wrap()
 	lea rax, [rel tina_wrap]
 	push rax
