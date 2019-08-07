@@ -77,7 +77,10 @@ _tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
 global _tina_resume, _tina_yield
 _tina_resume: ; (tina* coro, uintptr_t value)
 _tina_yield:
-	; Preserve calling coroutine registers.
+%push
+%define %$coro ARG0
+%define %$value ARG1
+	; Preserve calling coroutine's registers.
 	push rbp
 	push rbx
 	push r12
@@ -87,10 +90,10 @@ _tina_yield:
 	
 	; Swap stacks.
 	mov rdx, rsp
-	mov rsp, [ARG0 + 8]
-	mov [ARG0 + 8], rdx
+	mov rsp, [%$coro + 8]
+	mov [%$coro + 8], rdx
 	
-	; Restore callee coroutine registers.
+	; Restore callee coroutine's registers.
 	pop r15
 	pop r14
 	pop r13
@@ -99,5 +102,6 @@ _tina_yield:
 	pop rbp
 	
 	; Move 'value' to return register, pop and jump to the resume address.
-	mov RET, ARG1
+	mov RET, %$value
 	ret
+%pop
