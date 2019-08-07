@@ -2,7 +2,7 @@
 
 typedef struct tina tina;
 typedef uintptr_t tina_func(tina* coro, uintptr_t value);
-typedef void tina_err_func(void);
+typedef void tina_err_func(const char* message);
 
 tina_err_func* tina_err;
 

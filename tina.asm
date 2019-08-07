@@ -29,12 +29,11 @@ _tina_wrap: ; (tina* coro, tina_func* body)
 	call _tina_yield
 	
 	; Crash if the coroutine is resumed after exiting.
-	mov rax, [qword _tina_err]
+	mov rax, [rel _tina_err]
 	test rax, rax
 	jz .abort
-	mov ARG0, .err_complete
-	call rax
-	
+		lea ARG0, [rel .err_complete]
+		call rax
 	.abort: call _abort
 	
 	.err_complete: db "Attempted to resume a completed coroutine.",0
