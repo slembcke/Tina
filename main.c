@@ -15,24 +15,23 @@ struct tina {
 	alignas(16) uint8_t _stack[1024*1024];
 };
 
-uintptr_t tina_catch(tina* coro, uintptr_t value);
+uintptr_t tina_wrap(tina* coro, uintptr_t value);
+uintptr_t tina_resume(tina* coro, uintptr_t value);
+uintptr_t tina_yield(tina* coro, uintptr_t value);
 
 tina* tina_new(tina_func* body, void* ctx){
 	tina* coro = calloc(1, sizeof(tina));
 	coro->ctx = ctx;
 	
-	// Push tina_catch() and body() onto the stack.
-	void** rsp = (void**)(coro->_stack + sizeof(coro->_stack));
-	rsp[-2] = tina_catch;
-	rsp[-3] = body;
-	coro->_rsp = rsp - 3;
+	// Setup the stack to call tina_wrap().
+	uintptr_t* rsp = (uintptr_t*)(coro->_stack + sizeof(coro->_stack));
+	*(--rsp) = (uintptr_t)tina_wrap;
+	rsp -= 6;
+	coro->_rsp = rsp;
+	
+	tina_resume(coro, (uintptr_t)body);
 	
 	return coro;
-}
-
-uintptr_t tina_yield(tina* coro, uintptr_t value){
-	printf("tina_yield() NYI.");
-	abort();
 }
 
 // ---------------------------
