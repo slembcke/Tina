@@ -1,6 +1,4 @@
-extern _abort
-
-common _tina_err 8
+extern _puts, _abort
 
 ; System V rgument order: RDI, RSI, RDX, RCX, R8, and R9
 ; return value: RAX
@@ -9,6 +7,13 @@ common _tina_err 8
 %define ARG2 rdx
 %define ARG3 rcx
 %define RET rax
+
+section .data
+
+global _tina_err
+_tina_err: dq _puts
+
+section .text
 
 tina_wrap: ; (tina* coro, tina_func* body)
 %push
@@ -32,11 +37,10 @@ tina_wrap: ; (tina* coro, tina_func* body)
 	
 	; Crash if the coroutine is resumed after exiting.
 	mov rax, [rel _tina_err]
-	test rax, rax
-	jz .abort
-		lea ARG0, [rel .err_complete]
-		call rax
-	.abort: call _abort
+	lea ARG0, [rel .err_complete]
+	call rax
+	
+	call _abort
 	
 	.err_complete: db "Attempted to resume a completed coroutine.",0
 %pop

@@ -5,11 +5,6 @@
 
 #include "tina.h"
 
-
-void err(const char* message){
-	fprintf(stderr, "Tina err: %s\n", message);
-}
-
 static uintptr_t coro_body(tina* coro, uintptr_t value){
 	printf("coro_body() enter\n");
 	
@@ -23,8 +18,6 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 }
 
 int main(int argc, const char *argv[]){
-	tina_err = err;
-	
 	size_t size = 1024*1024 - 1;
 	void* buffer = malloc(size);
 	tina* coro = tina_init(buffer, size, coro_body, NULL);

@@ -2,8 +2,9 @@
 
 #include <inttypes.h>
 
-// Error callback function.
+// Error callback function type.
 typedef void tina_err_func(const char* message);
+// Error message function. Defaults to puts().
 extern tina_err_func* tina_err;
 
 // Coroutine struct.
