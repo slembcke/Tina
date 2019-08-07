@@ -1,14 +1,16 @@
-extern _tina_err
 extern _abort
+
+common _tina_err 8
 
 ; System V rgument order: RDI, RSI, RDX, RCX, R8, and R9
 ; return value: RAX
 %define ARG0 rdi
 %define ARG1 rsi
+%define ARG2 rdx
+%define ARG3 rcx
 %define RET rax
 
-global _tina_wrap
-_tina_wrap: ; (tina* coro, tina_func* body)
+tina_wrap: ; (tina* coro, tina_func* body)
 %push
 %define %$coro r12
 %define %$body r13
@@ -37,6 +39,39 @@ _tina_wrap: ; (tina* coro, tina_func* body)
 	.abort: call _abort
 	
 	.err_complete: db "Attempted to resume a completed coroutine.",0
+%pop
+
+global _tina_init
+_tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
+%push
+%define %$coro ARG0
+%define %$size ARG1
+%define %$body ARG2
+%define %$ctx ARG3
+	push rbp
+	mov rbp, rsp
+	
+	; coro->ctx = ctx
+	mov [%$coro + 0], %$ctx
+	
+	; Calculate stack top.
+	lea rsp, [%$coro + %$size]
+	; Push tina_wrap()
+	lea rax, [rel tina_wrap]
+	push rax
+	; Save space for the preserved registers.
+	sub rsp, 6*8
+	; coro->_rsp = rsp
+	mov [%$coro + 8], rsp
+	mov rsp, rbp
+	
+	; Start the coroutine, pass body() to tina_wrap().
+	mov ARG1, %$body
+	call _tina_resume
+	
+	mov RET, %$coro
+	pop rbp
+	ret
 %pop
 
 global _tina_resume, _tina_yield

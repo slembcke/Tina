@@ -1,17 +1,23 @@
 #include <inttypes.h>
 
-typedef struct tina tina;
-typedef uintptr_t tina_func(tina* coro, uintptr_t value);
+// Error callback function.
 typedef void tina_err_func(const char* message);
+extern tina_err_func* tina_err;
 
-tina_err_func* tina_err;
-
-struct tina {
+// Coroutine struct.
+typedef struct {
+	// User defined context pointer.
 	void* ctx;
+	
+	// Private implementation details.
 	void* _rsp;
 	uint8_t _stack[];
-};
+} tina;
 
-uintptr_t tina_wrap(tina* coro, uintptr_t value);
+// Coroutine body function type.
+typedef uintptr_t tina_func(tina* coro, uintptr_t value);
+
+tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx);
+
 uintptr_t tina_resume(tina* coro, uintptr_t value);
 uintptr_t tina_yield(tina* coro, uintptr_t value);
