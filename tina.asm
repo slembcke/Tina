@@ -1,17 +1,29 @@
-extern _puts, _abort
+%ifdef __linux__
+	%define SYSTEM_V_ABI
+%elifdef MACOS
+	%define SYSTEM_V_ABI
 
-; System V rgument order: RDI, RSI, RDX, RCX, R8, and R9
-; return value: RAX
-%define ARG0 rdi
-%define ARG1 rsi
-%define ARG2 rdx
-%define ARG3 rcx
-%define RET rax
+	%define tina_init _tina_init
+	%define tina_resume _tina_resume
+	%define tina_yield _tina_yield
+%else
+	%error No platform defined.
+%endif
+
+%ifdef SYSTEM_V_ABI
+	%define ARG0 rdi
+	%define ARG1 rsi
+	%define ARG2 rdx
+	%define ARG3 rcx
+	%define RET rax
+%else
+	%error No ABI defined.
+%endif
 
 section .data
 
-global _tina_err
-_tina_err: dq _puts
+global tina_err
+tina_err: dq 0
 
 section .text
 
@@ -23,7 +35,7 @@ tina_wrap: ; (tina* coro, tina_func* body)
 	; Save 'coro' and 'body' to preserved registers.
 	mov %$coro, ARG0
 	mov %$body, ARG1
-	call _tina_yield
+	call tina_yield
 	
 	; Run the coroutine body.
 	mov ARG0, %$coro
@@ -33,20 +45,23 @@ tina_wrap: ; (tina* coro, tina_func* body)
 	; Yield the coroutine's return value.
 	mov ARG0, %$coro
 	mov ARG1, RET
-	call _tina_yield
+	call tina_yield
 	
-	; Crash if the coroutine is resumed after exiting.
-	mov rax, [rel _tina_err]
+	; Call the error function if the coroutine is resumed after exiting.
+	mov rax, [rel tina_err]
 	lea ARG0, [rel .err_complete]
 	call rax
 	
-	call _abort
+	; Error function should not return!
+	; Is there a better way to force a crash?
+	mov rax, [0]
+	ret
 	
-	.err_complete: db "Attempted to resume a completed coroutine.",0
+	.err_complete: db "Attempted to resume a completed coroutine.", 0
 %pop
 
-global _tina_init
-_tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
+global tina_init
+tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
 %push
 %define %$coro ARG0
 %define %$size ARG1
@@ -72,16 +87,16 @@ _tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
 	
 	; Start the coroutine, pass body() to tina_wrap().
 	mov ARG1, %$body
-	call _tina_resume
+	call tina_resume
 	
 	mov RET, %$coro
 	pop rbp
 	ret
 %pop
 
-global _tina_resume, _tina_yield
-_tina_resume: ; (tina* coro, uintptr_t value)
-_tina_yield:
+global tina_resume, tina_yield
+tina_resume: ; (tina* coro, uintptr_t value)
+tina_yield:
 %push
 %define %$coro ARG0
 %define %$value ARG1
