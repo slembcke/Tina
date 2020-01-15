@@ -14,6 +14,8 @@ tina_init_stack: ; (void* buffer, size_t size, tina_func *wrap) -> void* rsp
 	and ARG0, ~0xF
 	mov rsp, ARG0
 	
+	; Push a NULL return address onto the stack to avoid confusing the debugger.
+	push 0
 	; Push tina_wrap() that tina_init() will yield to.
 	push ARG2
 	
