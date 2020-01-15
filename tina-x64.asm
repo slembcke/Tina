@@ -2,11 +2,8 @@
 %define ARG1 rsi
 %define RET rax
 
-extern tina_wrap
-extern tina_err
-
 global tina_init_stack
-tina_init_stack: ; (void* rsp) -> void* rsp
+tina_init_stack: ; (void* rsp, tina_func *wrap) -> void* rsp
 %push
 	push rbp
 	mov rbp, rsp
@@ -16,8 +13,7 @@ tina_init_stack: ; (void* rsp) -> void* rsp
 	and rsp, ~0xF
 	
 	; Push tina_wrap()
-	lea rax, [rel tina_wrap]
-	push rax
+	push ARG1
 	
 	; Save space for the registers that tina_swap() will pop.
 	; They are unitialized and unused, but simpler than adding a special case.
@@ -29,7 +25,7 @@ tina_init_stack: ; (void* rsp) -> void* rsp
 	ret
 %pop
 
-global tina_swap, tina_swap
+global tina_swap
 tina_swap: ; (tina* coro, uintptr_t value)
 %push
 	; Preserve calling coroutine's registers.
