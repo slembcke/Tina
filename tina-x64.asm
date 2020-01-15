@@ -1,14 +1,15 @@
+; TODO why did this stop working?
 %ifdef __linux__
 	%define SYSTEM_V_ABI
 %elifdef MACOS
 	%define SYSTEM_V_ABI
 
 	%define tina_init _tina_init
-	%define tina_resume _tina_resume
-	%define tina_yield _tina_yield
+	%define tina_swap _tina_swap
+	%define tina_swap _tina_swap
 %else
-	%define SYSTEM_V_ABI
 	; %error No platform defined.
+	%define SYSTEM_V_ABI
 %endif
 
 %ifdef SYSTEM_V_ABI
@@ -21,45 +22,10 @@
 	%error No ABI defined.
 %endif
 
-section .data
-
-global tina_err
-tina_err: dq 0
+extern tina_wrap
+extern tina_err
 
 section .text
-
-tina_wrap: ; (tina* coro, tina_func* body)
-%push
-%define %$coro r12
-%define %$body r13
-
-	; Save 'coro' and 'body' to preserved registers.
-	mov %$coro, ARG0
-	mov %$body, ARG1
-	call tina_yield
-	
-	; Run the coroutine body.
-	mov ARG0, %$coro
-	mov ARG1, RET
-	call %$body
-	
-	; Yield the coroutine's return value.
-	mov ARG0, %$coro
-	mov ARG1, RET
-	call tina_yield
-	
-	; Call the error function in an endless loop if attempting to resume it again.
-	err:
-	lea ARG0, [rel .err_complete]
-	call [rel tina_err]
-	
-	mov ARG0, %$coro
-	mov ARG1, 0
-	call tina_yield
-	jmp err
-	
-	.err_complete: db "Attempted to resume a completed coroutine.", 0
-%pop
 
 global tina_init
 tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
@@ -88,16 +54,15 @@ tina_init: ; (void* buffer, size_t size, tina_func* body, void* ctx) -> tina*
 	
 	; Start the coroutine, pass body() to tina_wrap().
 	mov ARG1, %$body
-	call tina_resume
+	call tina_swap
 	
 	mov RET, %$coro
 	pop rbp
 	ret
 %pop
 
-global tina_resume, tina_yield
-tina_resume: ; (tina* coro, uintptr_t value)
-tina_yield:
+global tina_swap, tina_swap
+tina_swap: ; (tina* coro, uintptr_t value)
 %push
 %define %$coro ARG0
 %define %$value ARG1

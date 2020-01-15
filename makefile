@@ -14,5 +14,5 @@ clean:
 %.o: %.asm
 	nasm -g -felf64 $^
 
-a.out: main.o tina.o
+a.out: main.o tina.o tina-x64.o
 	cc $^

@@ -15,7 +15,7 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 	
 	for(unsigned i = 0; i < 10; i++){
 		printf("coro_body(): %u\n", i);
-		tina_yield(coro, true);
+		tina_swap(coro, true);
 	}
 	
 	printf("coro_body() return\n");
@@ -29,12 +29,12 @@ int main(int argc, const char *argv[]){
 	void* buffer = malloc(size);
 	tina* coro = tina_init(buffer, size, coro_body, NULL);
 	
-	while(tina_resume(coro, 0)){}
+	while(tina_swap(coro, 0)){}
 	printf("Success!\n");
 	
 	printf("Resuming again will call handle_tina_err()\n");
-	tina_resume(coro, 0);
-	tina_resume(coro, 0);
+	tina_swap(coro, 0);
+	tina_swap(coro, 0);
 	
 	return EXIT_SUCCESS;
 }

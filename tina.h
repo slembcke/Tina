@@ -22,5 +22,4 @@ typedef uintptr_t tina_func(tina* coro, uintptr_t value);
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx);
 
-uintptr_t tina_resume(tina* coro, uintptr_t value);
-uintptr_t tina_yield(tina* coro, uintptr_t value);
+uintptr_t tina_swap(tina* coro, uintptr_t value);
