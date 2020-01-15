@@ -5,7 +5,7 @@
 #include "stdio.h"
 
 // Defined in assembly.
-void* tina_init_stack(void* sp, tina_func* wrap);
+void* tina_init_stack(void* buffer, size_t size, tina_func* wrap);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
 
 // Wrapper function for all coroutines that handles resuming dead coroutines.
@@ -26,7 +26,7 @@ static uintptr_t tina_wrap(tina* coro, uintptr_t value){
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx, tina_err_func* err){
 	tina* coro = buffer;
-	(*coro) = (tina){.ctx = ctx, ._err = err, ._sp = tina_init_stack(buffer + size, tina_wrap)};
+	(*coro) = (tina){.ctx = ctx, ._err = err, ._sp = tina_init_stack(buffer, size, tina_wrap)};
 	
 	// Allow tina_wrap() to finish initializing the stack.
 	tina_yield(coro, (uintptr_t)body);
