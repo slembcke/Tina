@@ -7,7 +7,8 @@
 	%define tina_resume _tina_resume
 	%define tina_yield _tina_yield
 %else
-	%error No platform defined.
+	%define SYSTEM_V_ABI
+	; %error No platform defined.
 %endif
 
 %ifdef SYSTEM_V_ABI
@@ -47,15 +48,15 @@ tina_wrap: ; (tina* coro, tina_func* body)
 	mov ARG1, RET
 	call tina_yield
 	
-	; Call the error function if the coroutine is resumed after exiting.
-	mov rax, [rel tina_err]
+	; Call the error function in an endless loop if attempting to resume it again.
+	err:
 	lea ARG0, [rel .err_complete]
-	call rax
+	call [rel tina_err]
 	
-	; Error function should not return!
-	; Is there a better way to force a crash?
-	mov rax, [0]
-	ret
+	mov ARG0, %$coro
+	mov ARG1, 0
+	call tina_yield
+	jmp err
 	
 	.err_complete: db "Attempted to resume a completed coroutine.", 0
 %pop

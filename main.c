@@ -7,7 +7,7 @@
 
 static void handle_tina_err(const char* err){
 	puts(err);
-	abort();
+	// abort();
 }
 
 static uintptr_t coro_body(tina* coro, uintptr_t value){
@@ -32,7 +32,8 @@ int main(int argc, const char *argv[]){
 	while(tina_resume(coro, 0)){}
 	printf("Success!\n");
 	
-	printf("Resuming again will crash...\n");
+	printf("Resuming again will call handle_tina_err()\n");
+	tina_resume(coro, 0);
 	tina_resume(coro, 0);
 	
 	return EXIT_SUCCESS;
