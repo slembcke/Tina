@@ -12,11 +12,11 @@ tina_init_stack: ; (void* rsp, tina_func *wrap) -> void* rsp
 	; Make sure the stack is aligned.
 	and rsp, ~0xF
 	
-	; Push tina_wrap()
+	; Push tina_wrap() that tina_init() will yield to.
 	push ARG1
 	
-	; Save space for the registers that tina_swap() will pop.
-	; They are unitialized and unused, but simpler than adding a special case.
+	; Save space for the registers that tina_swap() will pop when starting the coroutine.
+	; They are unitialized and unused, but this is simpler than adding a special case.
 	sub rsp, 6*8
 	
 	; Return the updated stack pointer.
@@ -38,8 +38,8 @@ tina_swap: ; (tina* coro, uintptr_t value)
 	
 	; Swap stacks.
 	mov rdx, rsp
-	mov rsp, [ARG0 + 8]
-	mov [ARG0 + 8], rdx
+	mov rsp, [ARG0 + 16]
+	mov [ARG0 + 16], rdx
 	
 	; Restore callee coroutine's registers.
 	pop r15

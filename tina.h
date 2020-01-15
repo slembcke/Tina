@@ -16,9 +16,8 @@ struct tina {
 	void* ctx;
 	
 	// Private implementation details.
-	void* _rsp;
 	tina_err_func* _err;
-	uint8_t _stack[];
+	void* _rsp;
 };
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx, tina_err_func* err);
