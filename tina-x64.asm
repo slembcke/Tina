@@ -1,5 +1,6 @@
 %define ARG0 rdi
 %define ARG1 rsi
+%define ARG2 rdx
 %define RET rax
 
 global tina_init_stack
@@ -8,9 +9,9 @@ tina_init_stack: ; (void* rsp, tina_func *wrap) -> void* rsp
 	push rbp
 	mov rbp, rsp
 	
+	; Align and set the stack.
+	and ARG0, ~0xF
 	mov rsp, ARG0
-	; Make sure the stack is aligned.
-	and rsp, ~0xF
 	
 	; Push tina_wrap() that tina_init() will yield to.
 	push ARG1
@@ -26,7 +27,7 @@ tina_init_stack: ; (void* rsp, tina_func *wrap) -> void* rsp
 %pop
 
 global tina_swap
-tina_swap: ; (tina* coro, uintptr_t value)
+tina_swap: ; (tina* coro, uintptr_t value, void** sp)
 %push
 	; Preserve calling coroutine's registers.
 	push rbp
@@ -37,9 +38,9 @@ tina_swap: ; (tina* coro, uintptr_t value)
 	push r15
 	
 	; Swap stacks.
-	mov rdx, rsp
-	mov rsp, [ARG0 + 16]
-	mov [ARG0 + 16], rdx
+	mov rax, rsp
+	mov rsp, [ARG2]
+	mov [ARG2], rax
 	
 	; Restore callee coroutine's registers.
 	pop r15
@@ -52,5 +53,6 @@ tina_swap: ; (tina* coro, uintptr_t value)
 	; 'value' passed to the caller's tina_swap() should be returned from the callee's tina_swap() call.
 	mov RET, ARG1
 	; Because we swapped stacks, we will return from the callee's tina_swap() call, not the caller's.
+	; Special case: 'coro' and 'value' are still in ARG0 and ARG1 to simplify calling tina_wrap() initially.
 	ret
 %pop
