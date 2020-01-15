@@ -2,8 +2,6 @@
 #include "stdlib.h"
 #include "tina.h"
 
-#include "stdio.h"
-
 // Defined in assembly.
 void* tina_init_stack(void* buffer, size_t size, tina_func* wrap);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
