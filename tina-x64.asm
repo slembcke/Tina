@@ -8,7 +8,7 @@ extern tina_yield
 
 tina_wrap: ; (tina* coro, tina_func *body) -> void
 	push rbp
-	mov rbp, ARG0 ; Save 'coro' in rbp since we don't need rbp.
+	mov rbp, ARG0
 	push ARG1 ; Push 'body' to the stack.
 	
 	; Yield back into tina_init(), coroutine is ready!
@@ -25,14 +25,11 @@ tina_wrap: ; (tina* coro, tina_func *body) -> void
 	jmp tina_finish
 
 global tina_init_stack
-tina_init_stack: ; (void* buffer, tina_func *wrap) -> void* rsp
+tina_init_stack: ; (void* sp, tina_func *wrap) -> void* rsp
 	push rbp
 	mov rbp, rsp
 	
-	; Calculate and align the stack top.
-	and ARG0, ~0xF
 	mov rsp, ARG0
-	
 	; Push a NULL return address onto the stack to avoid confusing the debugger.
 	push 0
 	; Push tina_wrap() that tina_init() will yield to.

@@ -22,7 +22,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx, tina_err_
 	(*coro) = (tina){
 		.ctx = ctx,
 		._err = err,
-		._sp = tina_init_stack(buffer + size)
+		._sp = tina_init_stack((uintptr_t)(buffer + size) & ~0xF)
 	};
 	
 	// Allow tina_wrap() to finish initializing the stack.
