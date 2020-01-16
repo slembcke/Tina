@@ -3,21 +3,23 @@
 %define ARG2 rdx
 %define RET rax
 
+extern tina_wrap
+
 global tina_init_stack
-tina_init_stack: ; (void* buffer, size_t size, tina_func *wrap) -> void* rsp
+tina_init_stack: ; (void* buffer, tina_func *wrap) -> void* rsp
 %push
 	push rbp
 	mov rbp, rsp
 	
 	; Calculate and align the stack top.
-	add ARG0, ARG1
 	and ARG0, ~0xF
 	mov rsp, ARG0
 	
 	; Push a NULL return address onto the stack to avoid confusing the debugger.
 	push 0
 	; Push tina_wrap() that tina_init() will yield to.
-	push ARG2
+	lea rax, [rel tina_wrap] 
+	push rax
 	
 	; Save space for the registers that tina_swap() will pop when starting the coroutine.
 	; They are unitialized and unused, but this is simpler than adding a special case.
