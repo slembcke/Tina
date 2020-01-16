@@ -6,14 +6,9 @@
 void* tina_init_stack(void* sp);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
 
-// Wrapper function for all coroutines that handles resuming dead coroutines.
-uintptr_t tina_wrap(tina* coro, uintptr_t value){
-	// tina_init() yields once so tina_wrap() can prep the stack and be ready to call into body().
+// Function called when a coroutine body function exits.
+void tina_finish(tina* coro, uintptr_t value){
 	tina_yield(coro, value);
-	
-	// Call the body function and yield the final return value.
-	tina_func* body = (tina_func*)value;
-	tina_yield(coro, body(coro, value));
 	
 	// Any attempt to resume the coroutine after it's dead should call the error func.
 	while(true){
