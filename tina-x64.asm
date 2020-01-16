@@ -6,23 +6,21 @@
 extern tina_finish
 extern tina_yield
 
-tina_wrap: ; (tina* coro, uintptr_t value) -> void
+tina_wrap: ; (tina* coro, tina_func *body) -> void
 	push rbp
+	mov rbp, ARG0 ; Save 'coro' in rbp since we don't need rbp.
+	push ARG1 ; Push 'body' to the stack.
 	
-	; Save the arguments.
-	push ARG0
-	push ARG1
+	; Yield back into tina_init(), coroutine is ready!
+	call tina_yield
 	
-	call tina_yield ; Yield back into tina_init(), coroutine is ready!
-	mov ARG1, RET ; yield return value gets passed to the body.
-	
-	pop rax ; Pop the body function address.
-	mov ARG0, [rsp] ; Read coro back from the stack.
+	mov ARG0, rbp
+	mov ARG1, RET
+	pop rax
 	call rax
-	mov ARG1, RET ; body return value gets passed to tina_finish().
 	
-	; Pop coro from the stack and tail cal tina_finish().
-	pop ARG0
+	mov ARG0, rbp
+	mov ARG1, RET
 	pop rbp
 	jmp tina_finish
 
