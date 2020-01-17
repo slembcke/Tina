@@ -1,8 +1,6 @@
-.weak tina_finish
-
 .global tina_init_stack
 tina_init_stack: # (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tina*
-	# Push all the saved registers, and save the stack pointer in the coroutine.
+	# Push all the saved registers, and save the stack pointer.
 	# tina_yield() below will restore these and return from tina_stack_init.
 	push {r4-r11, lr}
 	str sp, [r1]
@@ -24,7 +22,7 @@ tina_init_stack: # (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tin
 	mov r0, r4
 	blx r5
 	
-	# Pass the final return value to tina_finish().
+	# Tail call tina_finish() with the final value from body().
 	mov r1, r0
 	mov r0, r4
 	b tina_finish

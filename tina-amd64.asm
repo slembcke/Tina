@@ -7,12 +7,32 @@
 extern tina_finish
 extern tina_yield
 
-tina_wrap: ; (tina* coro, tina_func *body) -> void
+global tina_init_stack
+tina_init_stack: ; (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tina*
+	; Push all the saved registers, and save the stack pointer.
+	; tina_yield() below will restore these and return from tina_stack_init.
 	push rbp
-	; tina_wrap does not have a caller, no need to preserve rbp/rbx.
+	push rbx
+	push r12
+	push r13
+	push r14
+	push r15
+	mov [ARG1], rsp
+	
+	; save 'coro' and 'body' to preserved registers.
 	mov rbp, ARG0
-	mov rbx, ARG1
-	; Yield back into tina_init() to finish initialization.
+	mov rbx, ARG3
+	
+	; Align and apply the coroutine's stack.
+	and ARG2, ~0xF
+	mov rsp, ARG2
+	
+	; Push an NULL activation record onto the stack to make debuggers happy.
+	push 0
+	push 0
+	
+	; Yield back to, and return 'coro' from tina_stack_init().
+	mov ARG1, ARG0
 	call tina_yield
 	
 	; Pass the initial tina_yield() value on to body().
@@ -20,42 +40,10 @@ tina_wrap: ; (tina* coro, tina_func *body) -> void
 	mov ARG1, RET
 	call rbx
 	
-	; Pass the final return value on to tina_finish().
+	; Tail call tina_finish() with the final value from body().
 	mov ARG0, rbp
 	mov ARG1, RET
-	pop rbp
 	jmp tina_finish
-
-global tina_init_stack
-tina_init_stack: ; (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tina*
-	push rbp
-	mov rbp, rsp
-	
-	; Setup the stack:
-	mov rsp, ARG2
-	and rsp, ~0xF
-	; Push a NULL return address onto the stack to avoid confusing debuggers.
-	push 0
-	; Push tina_wrap() that tina_init() will yield to.
-	lea rax, [rel tina_wrap] 
-	push rax
-	; Save space for the registers that tina_swap() will pop when starting the coroutine.
-	; They are unitialized and unused, but this is simpler than adding a special case.
-	sub rsp, 6*8
-	; Save the stack pointer.
-	mov [ARG1], rsp
-	mov rsp, rbp
-	
-	; Save 'coro' so we can return it.
-	push ARG0
-	
-	; Call tina_yield() to enter tina_wrap() and finish the stack setp.
-	mov ARG1, ARG3
-	call tina_yield
-	
-	pop RET
-	pop rbp
-	ret
 
 global tina_swap
 tina_swap: ; (tina* coro, uintptr_t value, void** sp)
@@ -80,8 +68,5 @@ tina_swap: ; (tina* coro, uintptr_t value, void** sp)
 	pop rbx
 	pop rbp
 	
-	; 'value' passed to the caller's tina_swap() should be returned from the callee's tina_swap() call.
 	mov RET, ARG1
-	; Because we swapped stacks, we will return from the callee's tina_swap() call, not the caller's.
-	; Special case: 'coro' and 'value' are still in ARG0 and ARG1 to simplify calling tina_wrap() initially.
 	ret
