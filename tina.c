@@ -36,62 +36,81 @@ void tina_context(tina* coro, tina_func* body){
 	}
 }
 
-asm(".intel_syntax noprefix");
+#if __amd64 && __GNUC__
+	#if __linux__ || __APPLE__
+	#define TINA_USE_SYSVAMD64
+	#else
+	#error Unknown system.
+	#endif
 
-#define ARG0 "rdi"
-#define ARG1 "rsi"
-#define ARG2 "rdx"
-#define ARG3 "rcx"
-#define RET "rax"
+	#ifdef TINA_USE_SYSVAMD64
+		#define ARG0 "rdi"
+		#define ARG1 "rsi"
+		#define ARG2 "rdx"
+		#define ARG3 "rcx"
+		#define RET "rax"
+	#elif TINA_USE_WIN64
+		// TODO look this up.
+	#else
+		#error Unknown amd64 ABI?
+		#define TINA_NO_ASM
+	#endif
 
-asm(".func tina_init_stack");
-asm("tina_init_stack:");
-// Save the caller's registers and stack pointer.
-// tina_yield() will restore them once the coroutine is primed.
-asm("  push rbp");
-asm("  push rbx");
-asm("  push r12");
-asm("  push r13");
-asm("  push r14");
-asm("  push r15");
-asm("  mov ["ARG2"], rsp");
-// Align and apply the coroutine's stack.
-asm("  and "ARG3", ~0xF");
-asm("  mov rsp, "ARG3"");
-// Now executing within the new coroutine's stack!
-// When tina_context() first calls tina_yield() it will
-// return back to where tina_init_stack() was called.
+	#ifndef TINA_NO_ASM
+		asm(".intel_syntax noprefix");
 
-// Push an NULL activation record onto the stack to make debuggers happy.
-asm("  push 0");
-asm("  push 0");
-// Tail call to tina_context() to finish the coroutine initialization.
-asm("  jmp tina_context");
-asm(".endfunc");
+		asm(".func tina_init_stack");
+		asm("tina_init_stack:");
+		// Save the caller's registers and stack pointer.
+		// tina_yield() will restore them once the coroutine is primed.
+		asm("  push rbp");
+		asm("  push rbx");
+		asm("  push r12");
+		asm("  push r13");
+		asm("  push r14");
+		asm("  push r15");
+		asm("  mov ["ARG2"], rsp");
+		// Align and apply the coroutine's stack.
+		asm("  and "ARG3", ~0xF");
+		asm("  mov rsp, "ARG3"");
+		// Now executing within the new coroutine's stack!
+		// When tina_context() first calls tina_yield() it will
+		// return back to where tina_init_stack() was called.
 
-asm(".func tina_swap");
-asm("tina_swap:");
-// Preserve calling coroutine's registers.
-asm("  push rbp");
-asm("  push rbx");
-asm("  push r12");
-asm("  push r13");
-asm("  push r14");
-asm("  push r15");
-// Swap stacks.
-asm("  mov rax, rsp");
-asm("  mov rsp, ["ARG2"]");
-asm("  mov ["ARG2"], rax");
-// Restore callee coroutine's registers.
-asm("  pop r15");
-asm("  pop r14");
-asm("  pop r13");
-asm("  pop r12");
-asm("  pop rbx");
-asm("  pop rbp");
-// return 'value' to the callee.
-asm("  mov "RET", "ARG1"");
-asm("  ret");
-asm(".endfunc");
+		// Push an NULL activation record onto the stack to make debuggers happy.
+		asm("  push 0");
+		asm("  push 0");
+		// Tail call to tina_context() to finish the coroutine initialization.
+		asm("  jmp tina_context");
+		asm(".endfunc");
 
-asm(".att_syntax");
+		asm(".func tina_swap");
+		asm("tina_swap:");
+		// Preserve calling coroutine's registers.
+		asm("  push rbp");
+		asm("  push rbx");
+		asm("  push r12");
+		asm("  push r13");
+		asm("  push r14");
+		asm("  push r15");
+		// Swap stacks.
+		asm("  mov rax, rsp");
+		asm("  mov rsp, ["ARG2"]");
+		asm("  mov ["ARG2"], rax");
+		// Restore callee coroutine's registers.
+		asm("  pop r15");
+		asm("  pop r14");
+		asm("  pop r13");
+		asm("  pop r12");
+		asm("  pop rbx");
+		asm("  pop rbp");
+		// return 'value' to the callee.
+		asm("  mov "RET", "ARG1"");
+		asm("  ret");
+		asm(".endfunc");
+
+		asm(".att_syntax");
+	#endif
+#else
+	#error Unknown CPU/compiler combo.
+#endif
