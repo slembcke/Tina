@@ -1,4 +1,4 @@
-CFLAGS = -g -O0
+CFLAGS = -g -O2
 
 .phony: clean default run
 
@@ -14,5 +14,5 @@ clean:
 %.o: %.asm
 	nasm -g -felf64 $^
 
-a.out: main.o tina.o tina-amd64.o
+a.out: main.o tina.o tina-arm32.o
 	cc $^
