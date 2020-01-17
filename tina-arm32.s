@@ -1,39 +1,36 @@
-.global tina_init_stack
-tina_init_stack: # (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tina*
-	# Push all the saved registers, and save the stack pointer.
-	# tina_yield() below will restore these and return from tina_stack_init.
+// NOTE: This is a nearly line for line identical to the amd64 version which is commented.
+
+.global tina_context
+.func tina_context
+tina_context:
 	push {r4-r11, lr}
 	str sp, [r1]
 	
-	# save 'coro' and 'body' to preserved registers.
 	mov r4, r0
 	mov r5, r3
 	
-	# Align and apply the coroutine's stack.
 	and r2, r2, #~0xF
 	mov sp, r2
 	
-	# Push a NULL activation record onto the stack to make debuggers happy.
 	mov r2, #0
 	push {r2}
 	push {r2}
 	
-	# Yield back to, and return 'coro' from tina_stack_init().
 	mov r1, r0
 	bl tina_yield
 	
-	# Pass the initial tina_yield() value on to body().
 	mov r1, r0
 	mov r0, r4
 	blx r5
 	
-	# Tail call tina_finish() with the final value from body().
 	mov r1, r0
 	mov r0, r4
 	b tina_finish
+.endfunc
 
 .global tina_swap
-tina_swap: #(tina* coro, uintptr_t value, void** sp) -> uintptr_t value
+.func tina_swap
+tina_swap:
 	push {r4-r11, lr}
 	
 	mov r3, sp
@@ -43,3 +40,4 @@ tina_swap: #(tina* coro, uintptr_t value, void** sp) -> uintptr_t value
 	pop {r4-r11, lr}
 	mov r0, r1
 	bx lr
+.endfunc

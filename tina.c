@@ -2,6 +2,9 @@
 #include "stdlib.h"
 #include "tina.h"
 
+// TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
+// TODO: Is it worthwhile to try and detect stack overflows?
+
 // Defined in assembly.
 tina* tina_context(tina* coro, void** sp_loc, void* sp, tina_func* body);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
