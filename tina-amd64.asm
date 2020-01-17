@@ -1,6 +1,7 @@
 %define ARG0 rdi
 %define ARG1 rsi
 %define ARG2 rdx
+%define ARG3 rcx
 %define RET rax
 
 extern tina_finish
@@ -26,12 +27,13 @@ tina_wrap: ; (tina* coro, tina_func *body) -> void
 	jmp tina_finish
 
 global tina_init_stack
-tina_init_stack: ; (void* sp, tina_func *wrap) -> void* rsp
+tina_init_stack: ; (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tina*
 	push rbp
 	mov rbp, rsp
 	
 	; Setup the stack:
-	mov rsp, ARG0
+	mov rsp, ARG2
+	and rsp, ~0xF
 	; Push a NULL return address onto the stack to avoid confusing debuggers.
 	push 0
 	; Push tina_wrap() that tina_init() will yield to.
@@ -40,13 +42,20 @@ tina_init_stack: ; (void* sp, tina_func *wrap) -> void* rsp
 	; Save space for the registers that tina_swap() will pop when starting the coroutine.
 	; They are unitialized and unused, but this is simpler than adding a special case.
 	sub rsp, 6*8
-	; Return the updated stack pointer.
-	mov RET, rsp
+	; Save the stack pointer.
+	mov [ARG1], rsp
+	mov rsp, rbp
 	
-	leave
+	; Save 'coro' so we can return it.
+	push ARG0
+	
+	; Call tina_yield() to enter tina_wrap() and finish the stack setp.
+	mov ARG1, ARG3
+	call tina_yield
+	
+	pop RET
+	pop rbp
 	ret
-
-tina_start: (tina* coro, 
 
 global tina_swap
 tina_swap: ; (tina* coro, uintptr_t value, void** sp)
