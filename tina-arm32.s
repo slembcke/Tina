@@ -13,6 +13,11 @@ tina_init_stack: # (tina* coro, void** sp_loc, void* sp, tina_func* body) -> tin
 	and r2, r2, #~0xF
 	mov sp, r2
 	
+	# Push a NULL activation record onto the stack to make debuggers happy.
+	mov r2, #0
+	push {r2}
+	push {r2}
+	
 	# Yield back to, and return 'coro' from tina_stack_init().
 	mov r1, r0
 	bl tina_yield
