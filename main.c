@@ -25,7 +25,7 @@ int main(int argc, const char *argv[]){
 	uint8_t buffer[1024*1024];
 	tina* coro = tina_init(buffer, sizeof(buffer), coro_body, NULL);
 	coro->name = "MyCoro";
-	coro->err = handle_tina_err;
+	coro->error_handler = handle_tina_err;
 	
 	while(coro->running) tina_yield(coro, 0);
 	printf("Success!\n");

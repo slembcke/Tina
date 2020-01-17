@@ -6,9 +6,9 @@
 tina* tina_init_stack(tina* coro, void** sp_loc, void* sp, tina_func* body);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
 
-tina* tina_init(void* buffer, size_t size, tina_func* body, void* ctx){
+tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
-	(*coro) = (tina){.ctx = ctx, .running = true};
+	(*coro) = (tina){.user_data = user_data, .running = true};
 	return tina_init_stack(coro, &coro->_sp, buffer + size, body);
 }
 
@@ -23,7 +23,7 @@ void tina_finish(tina* coro, uintptr_t value){
 	
 	// Any attempt to resume the coroutine after it's dead should call the error func.
 	while(true){
-		if(coro->err) coro->err(coro, "Attempted to resume a dead coroutine.");
+		if(coro->error_handler) coro->error_handler(coro, "Attempted to resume a dead coroutine.");
 		tina_yield(coro, 0);
 	}
 }
