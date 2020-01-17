@@ -11,5 +11,5 @@ debug: a.out
 clean:
 	-rm *.o a.out
 
-a.out: main.o tina.o tina-amd64.o
+a.out: main.o tina.o
 	cc $^
