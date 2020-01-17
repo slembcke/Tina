@@ -3,13 +3,13 @@
 #include "tina.h"
 
 // Defined in assembly.
-tina* tina_init_stack(tina* coro, void** sp_loc, void* sp, tina_func* body);
+tina* tina_context(tina* coro, void** sp_loc, void* sp, tina_func* body);
 uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
 	(*coro) = (tina){.user_data = user_data, .running = true};
-	return tina_init_stack(coro, &coro->_sp, buffer + size, body);
+	return tina_context(coro, &coro->_sp, buffer + size, body);
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){

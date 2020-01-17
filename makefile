@@ -11,8 +11,5 @@ debug: a.out
 clean:
 	-rm *.o a.out
 
-%.o: %.asm
-	nasm -g -felf64 $^
-
 a.out: main.o tina.o tina-amd64.o
 	cc $^
