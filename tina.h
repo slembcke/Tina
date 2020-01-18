@@ -145,16 +145,22 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  push r13");
 		asm("  push r14");
 		asm("  push r15");
-		// Hmm... Do I need to steal the code from here?
-		// https://github.com/septag/deboost.context/blob/master/asm/jump_x86_64_ms_pe_gas.asm
-		// asm("  mov rax, gs:0x30");
-		// asm("  push [rax + 0x8]");
-		// asm("  push [rax + 0x10]");
-		// asm("  push [rax + 0x1478]");
-		// asm("  push [rax + 0x18]");
+		asm("  push gs:0x8");
+		asm("  push gs:0x10");
+		asm("  push gs:0x1478");
+		// asm("  push gs:0x20");
 		asm("  mov ["ARG2"], rsp");
 		asm("  and "ARG3", ~0xF");
 		asm("  mov rsp, "ARG3);
+		// TODO Are these really needed?
+		// https://github.com/septag/deboost.context/blob/master/asm/jump_x86_64_ms_pe_gas.asm
+		// https://github.com/wine-mirror/wine/blob/1aff1e6a370ee8c0213a0fd4b220d121da8527aa/include/winternl.h#L271
+		asm("  mov gs:0x8, "ARG3); // Stack base (high address)
+		asm("  mov gs:0x8, "ARG0); // Stack limit (low address)
+		asm("  mov gs:0x8, "ARG0); // Deallocation stack (also low address?)
+		// boost.context left the pop location for this uninitialized (or zeroed)? I think...
+		// Also it used 0x18 which seems wrong from the docs?
+		// asm("  mov gs:0x20, "ARG0);
 		asm("  push 0");
 		asm("  call tina_context");
 		asm("  ret");
@@ -168,9 +174,15 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  push r13");
 		asm("  push r14");
 		asm("  push r15");
+		asm("  push gs:0x8");
+		asm("  push gs:0x10");
+		asm("  push gs:0x1478");
 		asm("  mov rax, rsp");
 		asm("  mov rsp, ["ARG2"]");
 		asm("  mov ["ARG2"], rax");
+		asm("  pop gs:0x1478");
+		asm("  pop gs:0x10");
+		asm("  pop gs:0x8");
 		asm("  pop r15");
 		asm("  pop r14");
 		asm("  pop r13");
