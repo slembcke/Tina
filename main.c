@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#define TINA_IMPLEMENTATION
 #include "tina.h"
 
 static void handle_tina_err(tina* coro, const char* message){
