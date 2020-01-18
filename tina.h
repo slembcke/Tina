@@ -117,7 +117,7 @@ void tina_context(tina* coro, tina_func* body){
 		// The NULL activation record keeps the stack aligned and stack traces happy.
 		asm("  push 0");
 		asm("  jmp "LEADING_CHAR"tina_context");
-
+		
 		asm(""LEADING_CHAR"tina_swap:");
 		// Preserve calling coroutine's registers.
 		asm("  push rbp");
@@ -145,18 +145,17 @@ void tina_context(tina* coro, tina_func* body){
 	#endif
 #elif __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
-	// NOTE: Structure is nearly identical to the fully commented amd64 version.
+	// TODO: Only tested on RPi3.
 	
+	// NOTE: Code structure is nearly identical to the fully commented amd64 version.
 	asm("tina_init_stack:");
 	asm("  push {r4-r11, lr}");
 	asm("  str sp, [r2]");
 	asm("  and r3, r3, #~0xF");
 	asm("  mov sp, r3");
-	asm("  mov r2, #0");
-	asm("  push {r2}");
-	asm("  push {r2}");
+	asm("  mov lr, #0");
 	asm("  b tina_context");
-
+	
 	asm("tina_swap:");
 	asm("  push {r4-r11, lr}");
 	asm("  mov r3, sp");
