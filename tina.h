@@ -39,21 +39,21 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 // TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
 // TODO: Is it worthwhile to try and detect stack overflows?
 
-tina* tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
-uintptr_t tina_swap(tina* coro, uintptr_t value, void** sp);
+tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+uintptr_t _tina_swap(tina* coro, uintptr_t value, void** sp);
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
 	(*coro) = (tina){.user_data = user_data, .running = true};
-	return tina_init_stack(coro, body, &coro->_sp, buffer + size);
+	return _tina_init_stack(coro, body, &coro->_sp, buffer + size);
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
-	return tina_swap(coro, value, &coro->_sp);
+	return _tina_swap(coro, value, &coro->_sp);
 }
 
-void tina_context(tina* coro, tina_func* body){
-	// Yield back to the tina_init_stack() call, and return the coroutine.
+void _tina_context(tina* coro, tina_func* body){
+	// Yield back to the _tina_init_stack() call, and return the coroutine.
 	uintptr_t value = tina_yield(coro, (uintptr_t)coro);
 	// Call the body function with the first value.
 	value = body(coro, value);
@@ -76,23 +76,23 @@ void tina_context(tina* coro, tina_func* body){
 	// Since the arm version is by far the shortest, I'll document this one.
 	// The other variations are basically the same structurally.
 	
-	// tina_init_stack() sets up the stack and initial execution of the coroutine.
-	asm("tina_init_stack:");
+	// _tina_init_stack() sets up the stack and initial execution of the coroutine.
+	asm("_tina_init_stack:");
 	// First things first, save the registers protected by the ABI
 	asm("  push {r4-r11, lr}");
 	// Now store the stack pointer in the couroutine.
-	// tina_context() will call tina_yield() to restore the stack and registers later.
+	// _tina_context() will call tina_yield() to restore the stack and registers later.
 	asm("  str sp, [r2]");
 	// Align the stack top to 16 bytes as requested by the ABI and set it to the stack pointer.
 	asm("  and r3, r3, #~0xF");
 	asm("  mov sp, r3");
-	// Finally, tail call into tina_context.
-	// By setting the caller to null, debuggers will show tina_context() as a base stack frame.
+	// Finally, tail call into _tina_context.
+	// By setting the caller to null, debuggers will show _tina_context() as a base stack frame.
 	asm("  mov lr, #0");
-	asm("  b tina_context");
+	asm("  b _tina_context");
 	
-	// tina_swap() is responsible for swapping out the registers and stack pointer.
-	asm("tina_swap:");
+	// _tina_swap() is responsible for swapping out the registers and stack pointer.
+	asm("_tina_swap:");
 	// Like above, save the ABI protected registers and save the stack pointer.
 	asm("  push {r4-r11, lr}");
 	asm("  mov r3, sp");
@@ -122,7 +122,7 @@ void tina_context(tina* coro, tina_func* body){
 		#define ARG3 "rcx"
 		#define RET "rax"
 		
-		asm(TINA_SYMBOL(tina_init_stack:));
+		asm(TINA_SYMBOL(_tina_init_stack:));
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push r12");
@@ -133,9 +133,9 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  and "ARG3", ~0xF");
 		asm("  mov rsp, "ARG3);
 		asm("  push 0");
-		asm("  jmp " TINA_SYMBOL(tina_context));
+		asm("  jmp " TINA_SYMBOL(_tina_context));
 		
-		asm(TINA_SYMBOL(tina_swap:));
+		asm(TINA_SYMBOL(_tina_swap:));
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push r12");
@@ -160,8 +160,8 @@ void tina_context(tina* coro, tina_func* body){
 		#define ARG3 "r9"
 		#define RET "rax"
 		
-		asm(".global tina_init_stack");
-		asm("tina_init_stack:");
+		asm(".global _tina_init_stack");
+		asm("_tina_init_stack:");
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push rsi");
@@ -187,10 +187,10 @@ void tina_context(tina* coro, tina_func* body){
 		// Also it used 0x18 which seems wrong from the docs?
 		// asm("  mov gs:0x20, "ARG0);
 		asm("  push 0");
-		asm("  call tina_context");
+		asm("  call _tina_context");
 		asm("  ret");
 		
-		asm("tina_swap:");
+		asm("_tina_swap:");
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push rsi");
