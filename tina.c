@@ -36,7 +36,7 @@ void tina_context(tina* coro, tina_func* body){
 	}
 }
 
-#if __amd64 && __GNUC__
+#if __amd64__ && __GNUC__
 	#if __linux__ || __APPLE__
 	#define TINA_USE_SYSVAMD64
 	#else
@@ -111,6 +111,32 @@ void tina_context(tina* coro, tina_func* body){
 
 		asm(".att_syntax");
 	#endif
+#elif __ARM_EABI__ && __GNUC__
+	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
+	// NOTE: Structure is nearly identical to the fully commented amd64 version.
+	
+	asm(".func tina_init_stack");
+	asm("tina_init_stack:");
+	asm("  push {r4-r11, lr}");
+	asm("  str sp, [r2]");
+	asm("  and r3, r3, #~0xF");
+	asm("  mov sp, r3");
+	asm("  mov r2, #0");
+	asm("  push {r2}");
+	asm("  push {r2}");
+	asm("  b tina_context");
+	asm(".endfunc");
+
+	asm(".func tina_swap");
+	asm("tina_swap:");
+	asm("  push {r4-r11, lr}");
+	asm("  mov r3, sp");
+	asm("  ldr sp, [r2]");
+	asm("  str r3, [r2]");
+	asm("  pop {r4-r11, lr}");
+	asm("  mov r0, r1");
+	asm("  bx lr");
+	asm(".endfunc");
 #else
 	#error Unknown CPU/compiler combo.
 #endif
