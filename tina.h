@@ -70,33 +70,22 @@ void tina_context(tina* coro, tina_func* body){
 }
 
 #if __amd64__ && __GNUC__
-	#if __linux__
-		#define TINA_USE_SYSVAMD64
-		#define LEADING_CHAR ""
-	#elif __APPLE__
-		#define TINA_USE_SYSVAMD64
-		#define LEADING_CHAR "_"
-	#else
-		#error Unknown system.
-	#endif
-
-	#ifdef TINA_USE_SYSVAMD64
+	#if __unix__
+		#if __APPLE__
+			#define TINA_SYMBOL(sym) "_"#sym
+		#else
+			#define TINA_SYMBOL(sym) #sym
+		#endif
+		
 		#define ARG0 "rdi"
 		#define ARG1 "rsi"
 		#define ARG2 "rdx"
 		#define ARG3 "rcx"
 		#define RET "rax"
-	#elif TINA_USE_WIN64
-		// TODO look this up.
-	#else
-		#error Unknown amd64 ABI?
-		#define TINA_NO_ASM
-	#endif
-
-	#ifndef TINA_NO_ASM
+		
 		asm(".intel_syntax noprefix");
 
-		asm(""LEADING_CHAR"tina_init_stack:");
+		asm(TINA_SYMBOL(tina_init_stack:));
 		// Save the caller's registers and stack pointer.
 		// tina_yield() will restore them once the coroutine is primed.
 		asm("  push rbp");
@@ -116,9 +105,9 @@ void tina_context(tina* coro, tina_func* body){
 		// Tail call tina_context() to finish the coroutine init.
 		// The NULL activation record keeps the stack aligned and stack traces happy.
 		asm("  push 0");
-		asm("  jmp "LEADING_CHAR"tina_context");
+		asm("  jmp " TINA_SYMBOL(tina_context));
 		
-		asm(""LEADING_CHAR"tina_swap:");
+		asm(TINA_SYMBOL(tina_swap:));
 		// Preserve calling coroutine's registers.
 		asm("  push rbp");
 		asm("  push rbx");
@@ -142,6 +131,8 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  ret");
 
 		asm(".att_syntax");
+	#elif __win64__
+		#error NYI
 	#endif
 #elif __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
