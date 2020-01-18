@@ -70,10 +70,14 @@ void tina_context(tina* coro, tina_func* body){
 }
 
 #if __amd64__ && __GNUC__
-	#if __linux__ || __APPLE__
-	#define TINA_USE_SYSVAMD64
+	#if __linux__
+		#define TINA_USE_SYSVAMD64
+		#define LEADING_CHAR ""
+	#elif __APPLE__
+		#define TINA_USE_SYSVAMD64
+		#define LEADING_CHAR "_"
 	#else
-	#error Unknown system.
+		#error Unknown system.
 	#endif
 
 	#ifdef TINA_USE_SYSVAMD64
@@ -92,7 +96,7 @@ void tina_context(tina* coro, tina_func* body){
 	#ifndef TINA_NO_ASM
 		asm(".intel_syntax noprefix");
 
-		asm("tina_init_stack:");
+		asm(""LEADING_CHAR"tina_init_stack:");
 		// Save the caller's registers and stack pointer.
 		// tina_yield() will restore them once the coroutine is primed.
 		asm("  push rbp");
@@ -111,11 +115,10 @@ void tina_context(tina* coro, tina_func* body){
 
 		// Push an NULL activation record onto the stack to make debuggers happy.
 		asm("  push 0");
-		asm("  push 0");
 		// Tail call to tina_context() to finish the coroutine initialization.
-		asm("  jmp tina_context");
+		asm("  jmp "LEADING_CHAR"tina_context");
 
-		asm("tina_swap:");
+		asm(""LEADING_CHAR"tina_swap:");
 		// Preserve calling coroutine's registers.
 		asm("  push rbp");
 		asm("  push rbx");
