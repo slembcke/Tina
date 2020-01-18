@@ -92,7 +92,6 @@ void tina_context(tina* coro, tina_func* body){
 	#ifndef TINA_NO_ASM
 		asm(".intel_syntax noprefix");
 
-		asm(".func tina_init_stack");
 		asm("tina_init_stack:");
 		// Save the caller's registers and stack pointer.
 		// tina_yield() will restore them once the coroutine is primed.
@@ -115,9 +114,7 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  push 0");
 		// Tail call to tina_context() to finish the coroutine initialization.
 		asm("  jmp tina_context");
-		asm(".endfunc");
 
-		asm(".func tina_swap");
 		asm("tina_swap:");
 		// Preserve calling coroutine's registers.
 		asm("  push rbp");
@@ -140,7 +137,6 @@ void tina_context(tina* coro, tina_func* body){
 		// return 'value' to the callee.
 		asm("  mov "RET", "ARG1"");
 		asm("  ret");
-		asm(".endfunc");
 
 		asm(".att_syntax");
 	#endif
@@ -148,7 +144,6 @@ void tina_context(tina* coro, tina_func* body){
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// NOTE: Structure is nearly identical to the fully commented amd64 version.
 	
-	asm(".func tina_init_stack");
 	asm("tina_init_stack:");
 	asm("  push {r4-r11, lr}");
 	asm("  str sp, [r2]");
@@ -158,9 +153,7 @@ void tina_context(tina* coro, tina_func* body){
 	asm("  push {r2}");
 	asm("  push {r2}");
 	asm("  b tina_context");
-	asm(".endfunc");
 
-	asm(".func tina_swap");
 	asm("tina_swap:");
 	asm("  push {r4-r11, lr}");
 	asm("  mov r3, sp");
@@ -169,7 +162,6 @@ void tina_context(tina* coro, tina_func* body){
 	asm("  pop {r4-r11, lr}");
 	asm("  mov r0, r1");
 	asm("  bx lr");
-	asm(".endfunc");
 #else
 	#error Unknown CPU/compiler combo.
 #endif
