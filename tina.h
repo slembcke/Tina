@@ -70,6 +70,7 @@ void tina_context(tina* coro, tina_func* body){
 }
 
 #if __amd64__ && __GNUC__
+	asm(".intel_syntax noprefix");
 	#if __unix__
 		#if __APPLE__
 			#define TINA_SYMBOL(sym) "_"#sym
@@ -83,8 +84,6 @@ void tina_context(tina* coro, tina_func* body){
 		#define ARG3 "rcx"
 		#define RET "rax"
 		
-		asm(".intel_syntax noprefix");
-
 		asm(TINA_SYMBOL(tina_init_stack:));
 		// Save the caller's registers and stack pointer.
 		// tina_yield() will restore them once the coroutine is primed.
@@ -97,7 +96,7 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  mov ["ARG2"], rsp");
 		// Align and apply the coroutine's stack.
 		asm("  and "ARG3", ~0xF");
-		asm("  mov rsp, "ARG3"");
+		asm("  mov rsp, "ARG3);
 		// Now executing within the new coroutine's stack!
 		// When tina_context() first calls tina_yield() it will
 		// return back to where tina_init_stack() was called.
@@ -127,13 +126,63 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  pop rbx");
 		asm("  pop rbp");
 		// return 'value' to the callee.
-		asm("  mov "RET", "ARG1"");
+		asm("  mov "RET", "ARG1);
 		asm("  ret");
-
-		asm(".att_syntax");
-	#elif __win64__
-		#error NYI
+	#elif __WIN64__
+		#define ARG0 "rcx"
+		#define ARG1 "rdx"
+		#define ARG2 "r8"
+		#define ARG3 "r9"
+		#define RET "rax"
+		
+		asm(".global tina_init_stack");
+		asm("tina_init_stack:");
+		asm("  push rbp");
+		asm("  push rbx");
+		asm("  push rsi");
+		asm("  push rdi");
+		asm("  push r12");
+		asm("  push r13");
+		asm("  push r14");
+		asm("  push r15");
+		// Hmm... Do I need to steal the code from here?
+		// https://github.com/septag/deboost.context/blob/master/asm/jump_x86_64_ms_pe_gas.asm
+		// asm("  mov rax, gs:0x30");
+		// asm("  push [rax + 0x8]");
+		// asm("  push [rax + 0x10]");
+		// asm("  push [rax + 0x1478]");
+		// asm("  push [rax + 0x18]");
+		asm("  mov ["ARG2"], rsp");
+		asm("  and "ARG3", ~0xF");
+		asm("  mov rsp, "ARG3);
+		asm("  push 0");
+		asm("  call tina_context");
+		asm("  ret");
+		
+		asm("tina_swap:");
+		asm("  push rbp");
+		asm("  push rbx");
+		asm("  push rsi");
+		asm("  push rdi");
+		asm("  push r12");
+		asm("  push r13");
+		asm("  push r14");
+		asm("  push r15");
+		asm("  mov rax, rsp");
+		asm("  mov rsp, ["ARG2"]");
+		asm("  mov ["ARG2"], rax");
+		asm("  pop r15");
+		asm("  pop r14");
+		asm("  pop r13");
+		asm("  pop r12");
+		asm("  pop rdi");
+		asm("  pop rsi");
+		asm("  pop rbx");
+		asm("  pop rbp");
+		asm("  mov "RET", "ARG1);
+		asm("  ret");
 	#endif
+	asm(".att_syntax");
 #elif __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.

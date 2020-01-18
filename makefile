@@ -1,15 +1,14 @@
-CFLAGS = -g -O2
+CFLAGS = -g -Os
 
 .phony: clean default run
 
-run: a.out
-	./a.out
+a.out: main.c tina.h
+	cc -g $(CFLAGS) $^
 
-debug: a.out
-	gdb a.out
+a.exe: main.c tina.h
+	x86_64-w64-mingw32-gcc -gstabs -O0 $^
 
 clean:
-	-rm *.o a.out
+	-rm a.*
 
-a.out: main.o
-	cc $^
+main.o: tina.h
