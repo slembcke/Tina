@@ -69,7 +69,45 @@ void tina_context(tina* coro, tina_func* body){
 	}
 }
 
-#if __amd64__ && __GNUC__
+#if __ARM_EABI__ && __GNUC__
+	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
+	// TODO: Only tested on RPi3.
+	
+	// Since the arm version is by far the shortest, I'll document this one.
+	// The other variations are basically the same structurally.
+	
+	// tina_init_stack() sets up the stack and initial execution of the coroutine.
+	asm("tina_init_stack:");
+	// First things first, save the registers protected by the ABI
+	asm("  push {r4-r11, lr}");
+	// Now store the stack pointer in the couroutine.
+	// tina_context() will call tina_yield() to restore the stack and registers later.
+	asm("  str sp, [r2]");
+	// Align the stack top to 16 bytes as requested by the ABI and set it to the stack pointer.
+	asm("  and r3, r3, #~0xF");
+	asm("  mov sp, r3");
+	// Finally, tail call into tina_context.
+	// By setting the caller to null, debuggers will show tina_context() as a base stack frame.
+	asm("  mov lr, #0");
+	asm("  b tina_context");
+	
+	// tina_swap() is responsible for swapping out the registers and stack pointer.
+	asm("tina_swap:");
+	// Like above, save the ABI protected registers and save the stack pointer.
+	asm("  push {r4-r11, lr}");
+	asm("  mov r3, sp");
+	// Restore the stack pointer for the new coroutine.
+	asm("  ldr sp, [r2]");
+	// And save the previous stack pointer into the coroutine object.
+	asm("  str r3, [r2]");
+	// Restore the new coroutine's protected registers.
+	asm("  pop {r4-r11, lr}");
+	// Move the 'value' parameter to the return value register.
+	asm("  mov r0, r1");
+	// And perform a normal return instruction.
+	// This will return from tina_yield() in the new coroutine.
+	asm("  bx lr");
+#elif __amd64__ && __GNUC__
 	asm(".intel_syntax noprefix");
 	#if __unix__
 		#if __APPLE__
@@ -85,8 +123,6 @@ void tina_context(tina* coro, tina_func* body){
 		#define RET "rax"
 		
 		asm(TINA_SYMBOL(tina_init_stack:));
-		// Save the caller's registers and stack pointer.
-		// tina_yield() will restore them once the coroutine is primed.
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push r12");
@@ -94,38 +130,27 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  push r14");
 		asm("  push r15");
 		asm("  mov ["ARG2"], rsp");
-		// Align and apply the coroutine's stack.
 		asm("  and "ARG3", ~0xF");
 		asm("  mov rsp, "ARG3);
-		// Now executing within the new coroutine's stack!
-		// When tina_context() first calls tina_yield() it will
-		// return back to where tina_init_stack() was called.
-
-		// Tail call tina_context() to finish the coroutine init.
-		// The NULL activation record keeps the stack aligned and stack traces happy.
 		asm("  push 0");
 		asm("  jmp " TINA_SYMBOL(tina_context));
 		
 		asm(TINA_SYMBOL(tina_swap:));
-		// Preserve calling coroutine's registers.
 		asm("  push rbp");
 		asm("  push rbx");
 		asm("  push r12");
 		asm("  push r13");
 		asm("  push r14");
 		asm("  push r15");
-		// Swap stacks.
 		asm("  mov rax, rsp");
 		asm("  mov rsp, ["ARG2"]");
 		asm("  mov ["ARG2"], rax");
-		// Restore callee coroutine's registers.
 		asm("  pop r15");
 		asm("  pop r14");
 		asm("  pop r13");
 		asm("  pop r12");
 		asm("  pop rbx");
 		asm("  pop rbp");
-		// return 'value' to the callee.
 		asm("  mov "RET", "ARG1);
 		asm("  ret");
 	#elif __WIN64__
@@ -195,27 +220,6 @@ void tina_context(tina* coro, tina_func* body){
 		asm("  ret");
 	#endif
 	asm(".att_syntax");
-#elif __ARM_EABI__ && __GNUC__
-	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
-	// TODO: Only tested on RPi3.
-	
-	// NOTE: Code structure is nearly identical to the fully commented amd64 version.
-	asm("tina_init_stack:");
-	asm("  push {r4-r11, lr}");
-	asm("  str sp, [r2]");
-	asm("  and r3, r3, #~0xF");
-	asm("  mov sp, r3");
-	asm("  mov lr, #0");
-	asm("  b tina_context");
-	
-	asm("tina_swap:");
-	asm("  push {r4-r11, lr}");
-	asm("  mov r3, sp");
-	asm("  ldr sp, [r2]");
-	asm("  str r3, [r2]");
-	asm("  pop {r4-r11, lr}");
-	asm("  mov r0, r1");
-	asm("  bx lr");
 #else
 	#error Unknown CPU/compiler combo.
 #endif
