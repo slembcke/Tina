@@ -109,7 +109,7 @@ void tina_context(tina* coro, tina_func* body){
 	asm("  bx lr");
 #elif __amd64__ && __GNUC__
 	asm(".intel_syntax noprefix");
-	#if __unix__
+	#if __unix__ || __APPLE__
 		#if __APPLE__
 			#define TINA_SYMBOL(sym) "_"#sym
 		#else
