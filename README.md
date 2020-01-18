@@ -1,7 +1,12 @@
 # Tina
 Tina is a teeny tiny, header only, coroutine library!
 
-```
+Features:
+* Cross platform.
+* Super fast assembly language implementation.
+* Super simple API. Basically just create coroutines and swap them.
+
+```C
 #include <stdlib.h>
 #include <stdio.h>
 
