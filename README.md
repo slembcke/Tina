@@ -5,6 +5,8 @@ Tina is a teeny tiny, header only, coroutine library!
 * Cross platform.
 * Super fast assembly language implementation.
 * Super simple API. Basically just create coroutines and swap them.
+* Definitely not production ready! (Ok... not a feature, but you can help!)
+* Supports GCC/Clang. (MSVC doesn't support inline asm, so maybe not possible?)
 
 ## Example:
 ```C
@@ -66,6 +68,7 @@ Adding support for new platforms should be pretty straightforward and just requi
 
 ## TODO:
 * Need to do more Windows testing.
+* Need to save XMM* registers on win64.
 * MSVC support?
 * Arm 64 implementation. (Android/iOS I guess?)
 * Look into WASM, and see if that is possible.
