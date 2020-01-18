@@ -23,13 +23,22 @@ struct tina {
 	tina_error_handler* error_handler;
 	// Is the coroutine still running. (read only)
 	bool running;
+	// Pointer to the coroutine's memory buffer.
+	void* buffer;
 	
 	// Private implementation details.
 	void* _sp;
 };
 
 // Initialize a coroutine and return a pointer to it.
+// Coroutine's created this way do not need to be destroyed or freed.
+// You are responsible for 'buffer', but it will be stored in tina->buffer for you.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
+
+// Allocate and initialize a coroutine and return a pointer to it.
+tina* tina_new(size_t size, tina_func* body, void* user_data);
+// Free a coroutine created by tina_new().
+void tina_free(tina* coro);
 
 // Yield execution to a coroutine.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
@@ -46,6 +55,14 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
 	(*coro) = (tina){.user_data = user_data, .running = true};
 	return _tina_init_stack(coro, body, &coro->_sp, buffer + size);
+}
+
+tina* tina_new(size_t size, tina_func* body, void* user_data){
+	return tina_init(malloc(size), size, body, user_data);
+}
+
+void tina_free(tina* coro){
+	free(coro->buffer);
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
