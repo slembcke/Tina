@@ -1,39 +1,47 @@
-#include <stdbool.h>
-
 #include <stdlib.h>
 #include <stdio.h>
 
 #define TINA_IMPLEMENTATION
 #include "tina.h"
 
-static void handle_tina_err(tina* coro, const char* message){
-	printf("Tina error (%s): %s\n", coro->name, message);
+static uintptr_t coro_body(tina* coro, uintptr_t value);
+static void coro_error(tina* coro, const char* message);
+
+int main(int argc, const char *argv[]){
+	// Initialize a coroutine with some stack space, a body function, and some user data.
+	uint8_t buffer[1024*1024];
+	void* user_data = "some user data";
+	tina* coro = tina_init(buffer, sizeof(buffer), coro_body, user_data);
+	
+	// Optionally set some debugging values.
+	coro->name = "MyCoro";
+	coro->error_handler = coro_error;
+	
+	// Call tina_yield() to switch coroutines.
+	// You can optionally pass a value through to the coroutine as well.
+	while(coro->running) tina_yield(coro, 0);
+	
+	printf("Resuming again will call coro_error()\n");
+	tina_yield(coro, 0);
+	
+	return EXIT_SUCCESS;
 }
 
+// The body function is pretty straightforward.
+// It get's passed the coroutine and the first value passed to tina_yield().
 static uintptr_t coro_body(tina* coro, uintptr_t value){
 	printf("coro_body() enter\n");
+	printf("user_data: '%s'\n", (char*)coro->user_data);
 	
-	for(unsigned i = 0; i < 10; i++){
+	for(unsigned i = 0; i < 3; i++){
 		printf("coro_body(): %u\n", i);
 		tina_yield(coro, 0);
 	}
 	
-	printf("coro_body() return\n");
+	// The return value is returned from tina_yield() in the caller.
 	return 0;
 }
 
-int main(int argc, const char *argv[]){
-	uint8_t buffer[1024*1024];
-	tina* coro = tina_init(buffer, sizeof(buffer), coro_body, NULL);
-	coro->name = "MyCoro";
-	coro->error_handler = handle_tina_err;
-	
-	while(coro->running) tina_yield(coro, 0);
-	printf("Success!\n");
-	
-	printf("Resuming again will call handle_tina_err()\n");
-	tina_yield(coro, 0);
-	tina_yield(coro, 0);
-	
-	return EXIT_SUCCESS;
+static void coro_error(tina* coro, const char* message){
+	printf("Tina error (%s): %s\n", coro->name, message);
 }
