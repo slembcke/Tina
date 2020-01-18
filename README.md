@@ -1,11 +1,12 @@
 # Tina
 Tina is a teeny tiny, header only, coroutine library!
 
-Features:
+## Features:
 * Cross platform.
 * Super fast assembly language implementation.
 * Super simple API. Basically just create coroutines and swap them.
 
+## Example:
 ```C
 #include <stdlib.h>
 #include <stdio.h>
@@ -56,14 +57,15 @@ static void coro_error(tina* coro, const char* message){
 }
 ```
 
+## Platforms:
 So far it's been mildly tested to run on:
 * 64 bit Intel for Mac/Linux/Windows using GCC/Clang
 * 32 bit armv for Raspbian using GCC
 
 Adding support for new platforms should be pretty straightforward and just require a couple dozen lines of assembly code.
 
-TODO:
+## TODO:
 * Need to do more Windows testing.
 * MSVC support?
 * Arm 64 implementation. (Android/iOS I guess?)
-* Look into WASM see if that is possible.
+* Look into WASM, and see if that is possible.
