@@ -113,9 +113,9 @@ void tina_context(tina* coro, tina_func* body){
 		// When tina_context() first calls tina_yield() it will
 		// return back to where tina_init_stack() was called.
 
-		// Push an NULL activation record onto the stack to make debuggers happy.
+		// Tail call tina_context() to finish the coroutine init.
+		// The NULL activation record keeps the stack aligned and stack traces happy.
 		asm("  push 0");
-		// Tail call to tina_context() to finish the coroutine initialization.
 		asm("  jmp "LEADING_CHAR"tina_context");
 
 		asm(""LEADING_CHAR"tina_swap:");
