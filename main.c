@@ -9,10 +9,11 @@ static void coro_error(tina* coro, const char* message);
 
 int main(int argc, const char *argv[]){
 	// Initialize a coroutine with some stack space, a body function, and some user data.
-	uint8_t buffer[1024*1024];
+	size_t size = 64*1024;
+	uint8_t* buffer = malloc(size);
 	void* user_data = "some user data";
-	tina* coro = tina_init(buffer, sizeof(buffer), coro_body, user_data);
-	
+	tina* coro = tina_init(buffer, size, coro_body, user_data);
+
 	// Optionally set some debugging values.
 	coro->name = "MyCoro";
 	coro->error_handler = coro_error;
