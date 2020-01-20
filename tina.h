@@ -184,8 +184,8 @@ void _tina_context(tina* coro, tina_func* body){
 			0x2534ff6500000008, 0x2534ff6500000010,
 			0x4920894900001478, 0x4c65cc894cf0e183,
 			0x6500000008250c89, 0x00000010250c8948,
-			0x001478250c894865, 0xb848909090006a00,
-			(uintptr_t)_tina_context, 0x000000000000e0ff,
+			0x001478250c894865, 0xb84890006a006a00,
+			(uintptr_t)_tina_context, 0x909090909090e0ff,
 		};
 		
 		asm("_tina_swap:");

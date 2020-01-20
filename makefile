@@ -12,3 +12,8 @@ clean:
 	-rm a.*
 
 main.o: tina.h
+
+blob-init: win64-init.S
+	x86_64-w64-mingw32-gcc -c $<
+	objcopy -O binary win64-init.o win64-init.bin
+	xxd -e -g8 win64-init.bin > win64-init.xxd

@@ -33,37 +33,7 @@ _tina_init_stack:
 	// Also it used 0x18 which seems wrong from the docs?
 //	mov gs:0x20, ARG0);
 	push 0
-	nop
-	nop
+	push 0
 	nop
 	mov rax, 0xDEADBEEFDEADBEEF
 	jmp rax
-
-_tina_swap:
-	push rbp
-	push rbx
-	push rsi
-	push rdi
-	push r12
-	push r13
-	push r14
-	push r15
-	push gs:0x8
-	push gs:0x10
-	push gs:0x1478
-	mov rax, rsp
-	mov rsp, [ARG2]
-	mov [ARG2], rax
-	pop gs:0x1478
-	pop gs:0x10
-	pop gs:0x8
-	pop r15
-	pop r14
-	pop r13
-	pop r12
-	pop rdi
-	pop rsi
-	pop rbx
-	pop rbp
-	mov RET, ARG1
-	ret
