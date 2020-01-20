@@ -48,13 +48,15 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 // TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
 // TODO: Is it worthwhile to try and detect stack overflows?
 
-tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+typedef tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
 uintptr_t _tina_swap(tina* coro, uintptr_t value, void** sp);
+
+static const uint64_t foobar[];
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
 	(*coro) = (tina){.user_data = user_data, .running = true};
-	return _tina_init_stack(coro, body, &coro->_sp, buffer + size);
+	return ((_tina_init_stack*)foobar)(coro, body, &coro->_sp, buffer + size);
 }
 
 tina* tina_new(size_t size, tina_func* body, void* user_data){
@@ -177,34 +179,14 @@ void _tina_context(tina* coro, tina_func* body){
 		#define ARG3 "r9"
 		#define RET "rax"
 		
-		asm(".global _tina_init_stack");
-		asm("_tina_init_stack:");
-		asm("  push rbp");
-		asm("  push rbx");
-		asm("  push rsi");
-		asm("  push rdi");
-		asm("  push r12");
-		asm("  push r13");
-		asm("  push r14");
-		asm("  push r15");
-		asm("  push gs:0x8");
-		asm("  push gs:0x10");
-		asm("  push gs:0x1478");
-		// asm("  push gs:0x20");
-		asm("  mov ["ARG2"], rsp");
-		asm("  and "ARG3", ~0xF");
-		asm("  mov rsp, "ARG3);
-		// https://en.wikipedia.org/wiki/Win32_Thread_Information_Block#Contents_of_the_TIB_on_Windows
-		// https://github.com/septag/deboost.context/blob/master/asm/jump_x86_64_ms_pe_gas.asm
-		// https://github.com/wine-mirror/wine/blob/1aff1e6a370ee8c0213a0fd4b220d121da8527aa/include/winternl.h#L271
-		asm("  mov gs:0x8, "ARG3); // Stack base (high address)
-		asm("  mov gs:0x10, "ARG0); // Stack limit (low address)
-		asm("  mov gs:0x1478, "ARG0); // Deallocation stack (also low address)
-		// boost.context left the pop location for this uninitialized (or zeroed)? I think...
-		// Also it used 0x18 which seems wrong from the docs?
-		// asm("  mov gs:0x20, "ARG0);
-		asm("  push 0");
-		asm("  jmp _tina_context");
+		static const uint64_t foobar[] __attribute__((section (".text#"))) = {
+			0x5541544157565355, 0x2534ff6557415641,
+			0x2534ff6500000008, 0x2534ff6500000010,
+			0x4920894900001478, 0x4c65cc894cf0e183,
+			0x6500000008250c89, 0x00000010250c8948,
+			0x001478250c894865, 0xb848909090006a00,
+			(uintptr_t)_tina_context, 0x000000000000e0ff,
+		};
 		
 		asm("_tina_swap:");
 		asm("  push rbp");

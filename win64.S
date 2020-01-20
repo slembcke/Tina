@@ -35,7 +35,8 @@ _tina_init_stack:
 	push 0
 	nop
 	nop
-	mov rax, 0x1234567812345678
+	nop
+	mov rax, 0xDEADBEEFDEADBEEF
 	jmp rax
 
 _tina_swap:
