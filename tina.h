@@ -204,8 +204,7 @@ void _tina_context(tina* coro, tina_func* body){
 		// Also it used 0x18 which seems wrong from the docs?
 		// asm("  mov gs:0x20, "ARG0);
 		asm("  push 0");
-		asm("  call _tina_context");
-		asm("  ret");
+		asm("  jmp _tina_context");
 		
 		asm("_tina_swap:");
 		asm("  push rbp");
