@@ -48,15 +48,20 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 // TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
 // TODO: Is it worthwhile to try and detect stack overflows?
 
-typedef tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
-uintptr_t _tina_swap(tina* coro, uintptr_t value, void** sp);
+typedef tina* _tina_init_stack_f(tina* coro, tina_func* body, void** sp_loc, void* sp);
+typedef uintptr_t _tina_swap_f(tina* coro, uintptr_t value, void** sp);
 
-static const uint64_t foobar[];
+#if __WIN64__
+	static const uint64_t _tina_init_stack[], _tina_swap[];
+#else
+	tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+	uintptr_t _tina_swap(tina* coro, uintptr_t value, void** sp);
+#endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = buffer;
 	(*coro) = (tina){.user_data = user_data, .running = true};
-	return ((_tina_init_stack*)foobar)(coro, body, &coro->_sp, buffer + size);
+	return ((_tina_init_stack_f*)_tina_init_stack)(coro, body, &coro->_sp, buffer + size);
 }
 
 tina* tina_new(size_t size, tina_func* body, void* user_data){
@@ -68,7 +73,7 @@ void tina_free(tina* coro){
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
-	return _tina_swap(coro, value, &coro->_sp);
+	return ((_tina_swap_f*)_tina_swap)(coro, value, &coro->_sp);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -179,7 +184,8 @@ void _tina_context(tina* coro, tina_func* body){
 		#define ARG3 "r9"
 		#define RET "rax"
 		
-		static const uint64_t foobar[] __attribute__((section (".text#"))) = {
+		__attribute__((section(".text#")))
+		static const uint64_t _tina_init_stack[] = {
 			0x5541544157565355, 0x2534ff6557415641,
 			0x2534ff6500000008, 0x2534ff6500000010,
 			0x4920894900001478, 0x4c65cc894cf0e183,
@@ -188,34 +194,15 @@ void _tina_context(tina* coro, tina_func* body){
 			(uintptr_t)_tina_context, 0x909090909090e0ff,
 		};
 		
-		asm("_tina_swap:");
-		asm("  push rbp");
-		asm("  push rbx");
-		asm("  push rsi");
-		asm("  push rdi");
-		asm("  push r12");
-		asm("  push r13");
-		asm("  push r14");
-		asm("  push r15");
-		asm("  push gs:0x8");
-		asm("  push gs:0x10");
-		asm("  push gs:0x1478");
-		asm("  mov rax, rsp");
-		asm("  mov rsp, ["ARG2"]");
-		asm("  mov ["ARG2"], rax");
-		asm("  pop gs:0x1478");
-		asm("  pop gs:0x10");
-		asm("  pop gs:0x8");
-		asm("  pop r15");
-		asm("  pop r14");
-		asm("  pop r13");
-		asm("  pop r12");
-		asm("  pop rdi");
-		asm("  pop rsi");
-		asm("  pop rbx");
-		asm("  pop rbp");
-		asm("  mov "RET", "ARG1);
-		asm("  ret");
+		__attribute__((section(".text#")))
+		static const uint64_t _tina_swap[] = {
+			0x5541544157565355, 0x2534ff6557415641,
+			0x2534ff6500000008, 0x2534ff6500000010,
+			0x49e0894800001478, 0x048f65008949208b,
+			0x048f650000147825, 0x048f650000001025,
+			0x415f410000000825, 0x5b5e5f5c415d415e,
+			0x909090c3d089485d, 0x9090909090909090,
+		};
 	#endif
 	asm(".att_syntax");
 #else

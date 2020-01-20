@@ -4,7 +4,7 @@
 #define ARG3 r9
 #define RET rax
 
-.intel_syntax
+.intel_syntax noprefix
 
 _tina_swap:
 	push rbp
