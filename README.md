@@ -69,6 +69,7 @@ Adding support for new platforms should be pretty straightforward and just requi
 ## TODO:
 * Need to do more Windows testing.
 * Need to save XMM* registers on win64.
+* Does armhf ABI preserve vector registers? Can't find info on this. Needs testing.
 * MSVC support?
 * Arm 64 implementation. (Android/iOS I guess?)
 * Look into WASM, and see if that is possible.
