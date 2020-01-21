@@ -96,6 +96,7 @@ void _tina_context(tina* coro, tina_func* body){
 #if __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.
+	// TODO: "Registers s16-s31 (d8-d15, q4-q7) must be preserved across subroutine calls"
 	
 	// Since the arm version is by far the shortest, I'll document this one.
 	// The other variations are basically the same structurally.
@@ -115,6 +116,7 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  mov lr, #0");
 	asm("  b _tina_context");
 	
+	// https://static.docs.arm.com/ihi0042/g/aapcs32.pdf
 	// _tina_swap() is responsible for swapping out the registers and stack pointer.
 	asm("_tina_swap:");
 	// Like above, save the ABI protected registers and save the stack pointer.
@@ -159,6 +161,7 @@ void _tina_context(tina* coro, tina_func* body){
 		asm("  push 0");
 		asm("  jmp " TINA_SYMBOL(_tina_context));
 		
+		// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
 		asm(TINA_SYMBOL(_tina_swap:));
 		asm("  push rbp");
 		asm("  push rbx");
@@ -178,31 +181,7 @@ void _tina_context(tina* coro, tina_func* body){
 		asm("  mov "RET", "ARG1);
 		asm("  ret");
 	#elif __WIN64__
-		#define ARG0 "rcx"
-		#define ARG1 "rdx"
-		#define ARG2 "r8"
-		#define ARG3 "r9"
-		#define RET "rax"
-		
-		__attribute__((section(".text#")))
-		static const uint64_t _tina_init_stack[] = {
-			0x5541544157565355, 0x2534ff6557415641,
-			0x2534ff6500000008, 0x2534ff6500000010,
-			0x4920894900001478, 0x4c65cc894cf0e183,
-			0x6500000008250c89, 0x00000010250c8948,
-			0x001478250c894865, 0xb84890006a006a00,
-			(uintptr_t)_tina_context, 0x909090909090e0ff,
-		};
-		
-		__attribute__((section(".text#")))
-		static const uint64_t _tina_swap[] = {
-			0x5541544157565355, 0x2534ff6557415641,
-			0x2534ff6500000008, 0x2534ff6500000010,
-			0x49e0894800001478, 0x048f65008949208b,
-			0x048f650000147825, 0x048f650000001025,
-			0x415f410000000825, 0x5b5e5f5c415d415e,
-			0x909090c3d089485d, 0x9090909090909090,
-		};
+		// TODO Apparently MSVC doesn't use this define?
 	#endif
 	asm(".att_syntax");
 #else

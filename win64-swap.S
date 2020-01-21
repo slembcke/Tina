@@ -6,6 +6,9 @@
 
 .intel_syntax noprefix
 
+// https://docs.microsoft.com/en-us/cpp/build/x64-calling-convention?view=vs-2019
+// TODO Save XMM6-XMM15.
+
 _tina_swap:
 	push rbp
 	push rbx
