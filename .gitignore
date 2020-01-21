@@ -1,3 +1,6 @@
 *.o
 a.out
 a.exe
+
+*.bin
+*.xxd
