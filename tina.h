@@ -51,17 +51,34 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 typedef tina* _tina_init_stack_f(tina* coro, tina_func* body, void** sp_loc, void* sp);
 typedef uintptr_t _tina_swap_f(tina* coro, uintptr_t value, void** sp);
 
-#if __WIN64__
-	static const uint64_t _tina_init_stack[], _tina_swap[];
-#else
-	tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	uintptr_t _tina_swap(tina* coro, uintptr_t value, void** sp);
-#endif
+#pragma section("tina", execute)
+void _tina_context(tina* coro, tina_func* body);
 
-tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
-	tina* coro = buffer;
-	(*coro) = (tina){.user_data = user_data, .running = true};
-	return ((_tina_init_stack_f*)_tina_init_stack)(coro, body, &coro->_sp, buffer + size);
+__declspec(allocate("tina"))
+static const uint64_t _tina_init_stack[] = {
+	0x5541544157565355, 0x2534ff6557415641,
+	0x2534ff6500000008, 0x2534ff6500000010,
+	0x4920894900001478, 0x4c65cc894cf0e183,
+	0x6500000008250c89, 0x00000010250c8948,
+	0x001478250c894865, 0xb84890006a006a00,
+	(uintptr_t)_tina_context, 0x909090909090e0ff,
+};
+
+__declspec(allocate("tina"))
+static const uint64_t _tina_swap[] = {
+	0x5541544157565355, 0x2534ff6557415641,
+	0x2534ff6500000008, 0x2534ff6500000010,
+	0x49e0894800001478, 0x048f65008949208b,
+	0x048f650000147825, 0x048f650000001025,
+	0x415f410000000825, 0x5b5e5f5c415d415e,
+	0x909090c3d089485d, 0x9090909090909090,
+};
+
+tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
+	tina* coro = (tina*)buffer;
+	coro->user_data = user_data;
+	coro->running = true;
+	return ((_tina_init_stack_f*)(void*)_tina_init_stack)(coro, body, &coro->_sp, (uint8_t*)buffer + size);
 }
 
 tina* tina_new(size_t size, tina_func* body, void* user_data){
@@ -73,7 +90,7 @@ void tina_free(tina* coro){
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
-	return ((_tina_swap_f*)_tina_swap)(coro, value, &coro->_sp);
+	return ((_tina_swap_f*)(void*)_tina_swap)(coro, value, &coro->_sp);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -178,12 +195,6 @@ void _tina_context(tina* coro, tina_func* body){
 		asm("  mov "RET", "ARG1);
 		asm("  ret");
 	#elif __WIN64__
-		#define ARG0 "rcx"
-		#define ARG1 "rdx"
-		#define ARG2 "r8"
-		#define ARG3 "r9"
-		#define RET "rax"
-		
 		__attribute__((section(".text#")))
 		static const uint64_t _tina_init_stack[] = {
 			0x5541544157565355, 0x2534ff6557415641,
@@ -206,7 +217,6 @@ void _tina_context(tina* coro, tina_func* body){
 	#endif
 	asm(".att_syntax");
 #else
-	#error Unknown CPU/compiler combo.
 #endif
 
 #endif
