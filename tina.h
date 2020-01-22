@@ -109,6 +109,7 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("_tina_init_stack:");
 	// First things first, save the registers protected by the ABI
 	asm("  push {r4-r11, lr}");
+	asm("  vpush {q4-q7}");
 	// Now store the stack pointer in the couroutine.
 	// _tina_context() will call tina_yield() to restore the stack and registers later.
 	asm("  str sp, [r2]");
@@ -125,12 +126,14 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("_tina_swap:");
 	// Like above, save the ABI protected registers and save the stack pointer.
 	asm("  push {r4-r11, lr}");
+	asm("  vpush {q4-q7}");
 	asm("  mov r3, sp");
 	// Restore the stack pointer for the new coroutine.
 	asm("  ldr sp, [r2]");
 	// And save the previous stack pointer into the coroutine object.
 	asm("  str r3, [r2]");
 	// Restore the new coroutine's protected registers.
+	asm("  vpop {q4-q7}");
 	asm("  pop {r4-r11, lr}");
 	// Move the 'value' parameter to the return value register.
 	asm("  mov r0, r1");
