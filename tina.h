@@ -48,37 +48,24 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 // TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
 // TODO: Is it worthwhile to try and detect stack overflows?
 
+// Types for the assembly functions.
 typedef tina* _tina_init_stack_f(tina* coro, tina_func* body, void** sp_loc, void* sp);
 typedef uintptr_t _tina_swap_f(tina* coro, uintptr_t value, void** sp);
 
-#pragma section("tina", execute)
-void _tina_context(tina* coro, tina_func* body);
+// Symbols for the assembly functions.
+// These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
+extern const uint64_t _tina_init_stack[];
+extern const uint64_t _tina_swap[];
 
-__declspec(allocate("tina"))
-static const uint64_t _tina_init_stack[] = {
-	0x5541544157565355, 0x2534ff6557415641,
-	0x2534ff6500000008, 0x2534ff6500000010,
-	0x4920894900001478, 0x4c65cc894cf0e183,
-	0x6500000008250c89, 0x00000010250c8948,
-	0x001478250c894865, 0xb84890006a006a00,
-	(uintptr_t)_tina_context, 0x909090909090e0ff,
-};
-
-__declspec(allocate("tina"))
-static const uint64_t _tina_swap[] = {
-	0x5541544157565355, 0x2534ff6557415641,
-	0x2534ff6500000008, 0x2534ff6500000010,
-	0x49e0894800001478, 0x048f65008949208b,
-	0x048f650000147825, 0x048f650000001025,
-	0x415f410000000825, 0x5b5e5f5c415d415e,
-	0x909090c3d089485d, 0x9090909090909090,
-};
+// Macros to make calling the functions slightly cleaner.
+#define TINA_INIT_STACK ((_tina_init_stack_f*)(void*)_tina_init_stack)
+#define TINA_SWAP ((_tina_swap_f*)(void*)_tina_swap)
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->running = true;
-	return ((_tina_init_stack_f*)(void*)_tina_init_stack)(coro, body, &coro->_sp, (uint8_t*)buffer + size);
+	return TINA_INIT_STACK(coro, body, &coro->_sp, (uint8_t*)buffer + size);
 }
 
 tina* tina_new(size_t size, tina_func* body, void* user_data){
@@ -90,7 +77,7 @@ void tina_free(tina* coro){
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
-	return ((_tina_swap_f*)(void*)_tina_swap)(coro, value, &coro->_sp);
+	return TINA_SWAP(coro, value, &coro->_sp);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -150,59 +137,89 @@ void _tina_context(tina* coro, tina_func* body){
 	// And perform a normal return instruction.
 	// This will return from tina_yield() in the new coroutine.
 	asm("  bx lr");
-#elif __amd64__ && __GNUC__
-	asm(".intel_syntax noprefix");
-	#if __unix__ || __APPLE__
-		#if __APPLE__
-			#define TINA_SYMBOL(sym) "_"#sym
-		#else
-			#define TINA_SYMBOL(sym) #sym
-		#endif
-		
-		#define ARG0 "rdi"
-		#define ARG1 "rsi"
-		#define ARG2 "rdx"
-		#define ARG3 "rcx"
-		#define RET "rax"
-		
-		asm(TINA_SYMBOL(_tina_init_stack:));
-		asm("  push rbp");
-		asm("  push rbx");
-		asm("  push r12");
-		asm("  push r13");
-		asm("  push r14");
-		asm("  push r15");
-		asm("  mov ["ARG2"], rsp");
-		asm("  and "ARG3", ~0xF");
-		asm("  mov rsp, "ARG3);
-		asm("  push 0");
-		asm("  jmp " TINA_SYMBOL(_tina_context));
-		
-		// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
-		asm(TINA_SYMBOL(_tina_swap:));
-		asm("  push rbp");
-		asm("  push rbx");
-		asm("  push r12");
-		asm("  push r13");
-		asm("  push r14");
-		asm("  push r15");
-		asm("  mov rax, rsp");
-		asm("  mov rsp, ["ARG2"]");
-		asm("  mov ["ARG2"], rax");
-		asm("  pop r15");
-		asm("  pop r14");
-		asm("  pop r13");
-		asm("  pop r12");
-		asm("  pop rbx");
-		asm("  pop rbp");
-		asm("  mov "RET", "ARG1);
-		asm("  ret");
-	#elif __WIN64__
-		// TODO Apparently MSVC doesn't use this define?
+#elif __amd64__ && (__unix__ || __APPLE__)
+	#if __APPLE__
+		#define TINA_SYMBOL(sym) "_"#sym
+	#else
+		#define TINA_SYMBOL(sym) #sym
 	#endif
+	
+	#define ARG0 "rdi"
+	#define ARG1 "rsi"
+	#define ARG2 "rdx"
+	#define ARG3 "rcx"
+	#define RET "rax"
+	
+	asm(".intel_syntax noprefix");
+	
+	asm(TINA_SYMBOL(_tina_init_stack:));
+	asm("  push rbp");
+	asm("  push rbx");
+	asm("  push r12");
+	asm("  push r13");
+	asm("  push r14");
+	asm("  push r15");
+	asm("  mov ["ARG2"], rsp");
+	asm("  and "ARG3", ~0xF");
+	asm("  mov rsp, "ARG3);
+	asm("  push 0");
+	asm("  jmp " TINA_SYMBOL(_tina_context));
+	
+	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
+	asm(TINA_SYMBOL(_tina_swap:));
+	asm("  push rbp");
+	asm("  push rbx");
+	asm("  push r12");
+	asm("  push r13");
+	asm("  push r14");
+	asm("  push r15");
+	asm("  mov rax, rsp");
+	asm("  mov rsp, ["ARG2"]");
+	asm("  mov ["ARG2"], rax");
+	asm("  pop r15");
+	asm("  pop r14");
+	asm("  pop r13");
+	asm("  pop r12");
+	asm("  pop rbx");
+	asm("  pop rbp");
+	asm("  mov "RET", "ARG1);
+	asm("  ret");
+	
 	asm(".att_syntax");
-#else
+#elif __WIN64__
+	// MSVC doesn't allow inline assembly, assemble to binary blob then.
+	
+	#if __GNUC__
+		#define TINA_SECTION_ATTRIBUTE __attribute__((section(".text#")))
+	#elif _MSC_VER
+		#pragma section("tina", execute)
+		#define TINA_SECTION_ATTRIBUTE __declspec(allocate("tina"))
+	#else
+		#error Unknown/untested compiler for Win64. 
+	#endif
+	
+	// Assembled and dumped from win64-init.S
+	TINA_SECTION_ATTRIBUTE
+	const uint64_t _tina_init_stack[] = {
+		0x5541544157565355, 0x2534ff6557415641,
+		0x2534ff6500000008, 0x2534ff6500000010,
+		0x4920894900001478, 0x4c65cc894cf0e183,
+		0x6500000008250c89, 0x00000010250c8948,
+		0x001478250c894865, 0xb84890006a006a00,
+		(uintptr_t)_tina_context, 0x909090909090e0ff,
+	};
+
+	// Assembled and dumped from win64-swap.S
+	TINA_SECTION_ATTRIBUTE
+	const uint64_t _tina_swap[] = {
+		0x5541544157565355, 0x2534ff6557415641,
+		0x2534ff6500000008, 0x2534ff6500000010,
+		0x49e0894800001478, 0x048f65008949208b,
+		0x048f650000147825, 0x048f650000001025,
+		0x415f410000000825, 0x5b5e5f5c415d415e,
+		0x909090c3d089485d, 0x9090909090909090,
+	};
 #endif
 
-#endif
-#endif
+#endif // TINA_IMPLEMENTATION
+#endif // TINA_H
