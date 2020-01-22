@@ -100,7 +100,6 @@ void _tina_context(tina* coro, tina_func* body){
 #if __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.
-	// TODO: "Registers s16-s31 (d8-d15, q4-q7) must be preserved across subroutine calls"
 	
 	// Since the arm version is by far the shortest, I'll document this one.
 	// The other variations are basically the same structurally.
