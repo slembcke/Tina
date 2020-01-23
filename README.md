@@ -3,10 +3,10 @@ Tina is a teeny tiny, header only, coroutine library!
 
 ## Features:
 * Cross platform.
-* Zippy assembly language implementations.
+* Fast assembly language implementations.
 * Super simple API. Basically just create coroutines and swap them.
 * Minimal assembly footprint to support an ABI. (armv7 is like a dozen instructions)
-* Minimal code footprint. Currently < 200 sloc
+* Minimal code footprint. Currently ~200 sloc to support multiple common ABIs.
 * Supports GCC and Clang with inline assembly. MSVC with inline machine code.
 * Supports common ABIs:
   * Unix System V for amd64 (Unixes maybe PS4?)
@@ -14,12 +14,12 @@ Tina is a teeny tiny, header only, coroutine library!
   * armv7 (32 bit ARM, Rasperry Pi, iOS/Android probably needs extra #ifdefs)
 * Planning to add support for:
   * arm64 (64 bit ARM, modern iOS/Android, maybe Switch?)
-  * WASM (Need to find out if this is possible.)
+  * WASM (Need to find out if this is even possible.)
 
 ## Non-features:
 * Definitely not production ready! (Please help me test!)
-* No intention to support for example: 32 bit Windows/Unix, MIPS, etc. Pull requests are fine though.
-* Not vanilla, portable, C code by wrapping kinda-sorta-deprecated APIs like CreateFiber() or makecontext().
+* No intention to support for example: 32 bit Windows/Unix, MIPS, etc. Pull requests are welcome though.
+* Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like CreateFiber() or makecontext().
 
 ## Example:
 ```C
