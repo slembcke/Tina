@@ -9,7 +9,7 @@ static void coro_error(tina* coro, const char* message);
 
 int main(int argc, const char *argv[]){
 	// Initialize a coroutine with some stack space, a body function, and some user data.
-	tina* coro = tina_new(64*1024, coro_body, "A user data pointer.");
+	tina* coro = tina_new(1024*1024, coro_body, "A user data pointer.");
 
 	// Optionally set some debugging values.
 	coro->name = "MyCoro";
