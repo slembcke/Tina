@@ -3,10 +3,23 @@ Tina is a teeny tiny, header only, coroutine library!
 
 ## Features:
 * Cross platform.
-* Super fast assembly language implementation.
+* Zippy assembly language implementations.
 * Super simple API. Basically just create coroutines and swap them.
-* Definitely not production ready! (Ok... not a feature, but you can help!)
-* Supports GCC/Clang. (MSVC doesn't support inline asm, so maybe not possible?)
+* Minimal assembly footprint to support an ABI. (armv7 is like a dozen instructions)
+* Minimal code footprint. Currently < 200 sloc
+* Supports GCC and Clang with inline assembly. MSVC with inline machine code.
+* Supports common ABIs:
+  * Unix System V for amd64 (Unixes maybe PS4?)
+  * Win64 (64 bit Windows, maybe Xbox?)
+  * armv7 (32 bit ARM, Rasperry Pi, iOS/Android probably needs extra #ifdefs)
+* Planning to add support for:
+  * arm64 (64 bit ARM, modern iOS/Android, maybe Switch?)
+  * WASM (Need to find out if this is possible.)
+
+## Non-features:
+* Definitely not production ready! (Please help me test!)
+* No intention to support for example: 32 bit Windows/Unix, MIPS, etc. Pull requests are fine though.
+* Not vanilla, portable, C code by wrapping kinda-sorta-deprecated APIs like CreateFiber() or makecontext().
 
 ## Example:
 ```C
@@ -59,17 +72,7 @@ static void coro_error(tina* coro, const char* message){
 }
 ```
 
-## Platforms:
-So far it's been mildly tested to run on:
-* 64 bit Intel for Mac/Linux/Windows using GCC/Clang
-* 32 bit armv for Raspbian using GCC
-
-Adding support for new platforms should be pretty straightforward and just require a couple dozen lines of assembly code.
-
 ## TODO:
 * Need to do more Windows testing.
-* Need to save XMM* registers on win64.
-* Does armhf ABI preserve vector registers? Can't find info on this. Needs testing.
-* MSVC support?
 * Arm 64 implementation. (Android/iOS I guess?)
 * Look into WASM, and see if that is possible.
