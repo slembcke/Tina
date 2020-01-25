@@ -6,14 +6,13 @@ Tina is a teeny tiny, header only, coroutine library!
 * Fast assembly language implementations.
 * Super simple API. Basically just create coroutines and swap them.
 * Minimal assembly footprint to support an ABI. (armv7 is like a dozen instructions)
-* Minimal code footprint. Currently ~200 sloc to support multiple common ABIs.
+* Minimal code footprint. Currently ~200 sloc to support many common ABIs.
 * Supports GCC and Clang with inline assembly. MSVC with inline machine code.
 * Supports common ABIs:
-  * Unix System V for amd64 (Unixes maybe PS4?)
-  * Win64 (64 bit Windows, maybe Xbox?)
-  * armv7 (32 bit ARM, Rasperry Pi, iOS/Android probably needs extra #ifdefs)
+  * Unix System V for amd64 (Unixes + maybe PS4?)
+  * Win64 (64 bit Windows + maybe Xbox?)
+  * 32 and 64 bit ARM (Linux + RPi, iOS/Android maybe Switch should work with some #ifdef changes.)
 * Planning to add support for:
-  * arm64 (64 bit ARM, modern iOS/Android, maybe Switch?)
   * WASM (Need to find out if this is even possible.)
 
 ## Non-features:
@@ -73,6 +72,5 @@ static void coro_error(tina* coro, const char* message){
 ```
 
 ## TODO:
-* Need to do more Windows testing.
-* Arm 64 implementation. (Android/iOS I guess?)
+* Need some real tests.
 * Look into WASM, and see if that is possible.
