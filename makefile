@@ -2,7 +2,7 @@ CFLAGS = -g -Os
 
 .phony: clean default run
 
-a.out: main.c arm64.S
+a.out: main.c
 	cc -g -O2 $(CFLAGS) $^ -o $@
 
 a.exe: main.c # win64-init.S win64-swap.S

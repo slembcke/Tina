@@ -97,6 +97,12 @@ void _tina_context(tina* coro, tina_func* body){
 	}
 }
 
+#if __APPLE__
+	#define TINA_SYMBOL(sym) "_"#sym
+#else
+	#define TINA_SYMBOL(sym) #sym
+#endif
+
 #if __ARM_EABI__ && __GNUC__
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.
@@ -140,12 +146,6 @@ void _tina_context(tina* coro, tina_func* body){
 	// This will return from tina_yield() in the new coroutine.
 	asm("  bx lr");
 #elif __amd64__ && (__unix__ || __APPLE__)
-	#if __APPLE__
-		#define TINA_SYMBOL(sym) "_"#sym
-	#else
-		#define TINA_SYMBOL(sym) #sym
-	#endif
-	
 	#define ARG0 "rdi"
 	#define ARG1 "rsi"
 	#define ARG2 "rdx"
@@ -235,6 +235,55 @@ void _tina_context(tina* coro, tina_func* body){
 		0x415d415e415f4100, 0xd089485d5b5e5f5c,
 		0x90909090909090c3, 0x9090909090909090,
 	};
+#elif __aarch64__ && __GNUC__
+	asm(TINA_SYMBOL(_tina_init_stack:));
+	asm("  sub sp, sp, 0xA0");
+	asm("  stp x19, x20, [sp, 0x00]");
+	asm("  stp x21, x22, [sp, 0x10]");
+	asm("  stp x23, x24, [sp, 0x20]");
+	asm("  stp x25, x26, [sp, 0x30]");
+	asm("  stp x27, x28, [sp, 0x40]");
+	asm("  stp x29, x30, [sp, 0x50]");
+	asm("  stp d8 , d9 , [sp, 0x60]");
+	asm("  stp d10, d11, [sp, 0x70]");
+	asm("  stp d12, d13, [sp, 0x80]");
+	asm("  stp d14, d15, [sp, 0x90]");
+	asm("  mov x4, sp");
+	asm("  str x4, [x2]");
+	asm("  and x3, x3, #~0xF");
+	asm("  mov sp, x3");
+	asm("  mov lr, #0");
+	asm("  b _tina_context");
+
+	asm(TINA_SYMBOL(_tina_swap:));
+	asm("  sub sp, sp, 0xA0");
+	asm("  stp x19, x20, [sp, 0x00]");
+	asm("  stp x21, x22, [sp, 0x10]");
+	asm("  stp x23, x24, [sp, 0x20]");
+	asm("  stp x25, x26, [sp, 0x30]");
+	asm("  stp x27, x28, [sp, 0x40]");
+	asm("  stp x29, x30, [sp, 0x50]");
+	asm("  stp d8 , d9 , [sp, 0x60]");
+	asm("  stp d10, d11, [sp, 0x70]");
+	asm("  stp d12, d13, [sp, 0x80]");
+	asm("  stp d14, d15, [sp, 0x90]");
+	asm("  mov x3, sp");
+	asm("  ldr x4, [x2]");
+	asm("  mov sp, x4");
+	asm("  str x3, [x2]");
+	asm("  ldp x19, x20, [sp, 0x00]");
+	asm("  ldp x21, x22, [sp, 0x10]");
+	asm("  ldp x23, x24, [sp, 0x20]");
+	asm("  ldp x25, x26, [sp, 0x30]");
+	asm("  ldp x27, x28, [sp, 0x40]");
+	asm("  ldp x29, x30, [sp, 0x50]");
+	asm("  ldp d8 , d9 , [sp, 0x60]");
+	asm("  ldp d10, d11, [sp, 0x70]");
+	asm("  ldp d12, d13, [sp, 0x80]");
+	asm("  ldp d14, d15, [sp, 0x90]");
+	asm("  add sp, sp, 0xA0");
+	asm("  mov x0, x1");
+	asm("  ret");
 #endif
 
 #endif // TINA_IMPLEMENTATION
