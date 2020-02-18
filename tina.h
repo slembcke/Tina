@@ -188,7 +188,7 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  ret");
 	
 	asm(".att_syntax");
-#elif __WIN64__
+#elif __WIN64__ || defined(_WIN64)
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
 	#if __GNUC__
@@ -212,7 +212,7 @@ void _tina_context(tina* coro, tina_func* body){
 		0x290f44102474290f, 0xe18349208949243c,
 		0x0c894865cc894cf0, 0x8948650000147825,
 		0x4c6500000010250c, 0x6a00000008250c89,
-		0xb848909090909000, (uint64_t)_tina_context,
+		0xb8489020ec834800, (uint64_t)_tina_context,
 		0x909090909090e0ff, 0x9090909090909090,
 	};
 

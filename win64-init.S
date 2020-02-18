@@ -42,14 +42,12 @@ _tina_init_stack:
 	mov gs:0x10, ARG0 // Stack limit (low address)
 	mov gs:0x8, ARG3 // Stack base (high address)
 	
+	// Push stack frame sentinel.
 	push 0
-	//jmp _tina_context
+	// Reserve shadow space.
+	sub rsp, 0x20
 	
 	// Pad the binary so the jump address will be 8 byte aligned and can be plopped into the array as data.
-	nop
-	nop
-	nop
-	nop
 	nop
 	mov rax, 0xDEADBEEFDEADBEEF
 	jmp rax
