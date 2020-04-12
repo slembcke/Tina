@@ -40,32 +40,31 @@ tina* tina_new(size_t size, tina_func* body, void* user_data);
 // Free a coroutine created by tina_new().
 void tina_free(tina* coro);
 
+// Symbols for the assembly functions.
+// These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
+extern const uint64_t _tina_swap[];
+extern const uint64_t _tina_init_stack[];
+
 // Yield execution to a coroutine.
-uintptr_t tina_yield(tina* coro, uintptr_t value);
+static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
+	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
+	swap_func* swap = ((swap_func*)(void*)_tina_swap);
+	return swap(coro, value, &coro->_sp);
+}
 
 #ifdef TINA_IMPLEMENTATION
 
 // TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
 // TODO: Is it worthwhile to try and detect stack overflows?
 
-// Types for the assembly functions.
-typedef tina* _tina_init_stack_f(tina* coro, tina_func* body, void** sp_loc, void* sp);
-typedef uintptr_t _tina_swap_f(tina* coro, uintptr_t value, void** sp);
-
-// Symbols for the assembly functions.
-// These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
-extern const uint64_t _tina_init_stack[];
-extern const uint64_t _tina_swap[];
-
-// Macros to make calling the functions slightly cleaner.
-#define TINA_INIT_STACK ((_tina_init_stack_f*)(void*)_tina_init_stack)
-#define TINA_SWAP ((_tina_swap_f*)(void*)_tina_swap)
-
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->running = true;
-	return TINA_INIT_STACK(coro, body, &coro->_sp, (uint8_t*)buffer + size);
+
+	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
+	init_func* init = ((init_func*)(void*)_tina_init_stack);
+	return init(coro, body, &coro->_sp, (uint8_t*)buffer + size);
 }
 
 tina* tina_new(size_t size, tina_func* body, void* user_data){
@@ -74,10 +73,6 @@ tina* tina_new(size_t size, tina_func* body, void* user_data){
 
 void tina_free(tina* coro){
 	free(coro->buffer);
-}
-
-uintptr_t tina_yield(tina* coro, uintptr_t value){
-	return TINA_SWAP(coro, value, &coro->_sp);
 }
 
 void _tina_context(tina* coro, tina_func* body){
