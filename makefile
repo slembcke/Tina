@@ -1,8 +1,8 @@
-CFLAGS = -g -Os
+CFLAGS = -g -O0
 
 .phony: clean default run
 
-a.out: main.c
+a.out: task.c
 	cc $(CFLAGS) $< -o $@
 
 a.exe: main.c # win64-init.S win64-swap.S
