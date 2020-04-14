@@ -10,7 +10,7 @@
 #define TINA_TASK_IMPLEMENTATION
 #include "tina_task.h"
 
-tina_tasks TASKS = {};
+tina_tasks* TASKS;
 atomic_uint COUNT;
 
 static void TaskGeneric(tina_task* task){
@@ -23,7 +23,7 @@ static void TaskA(tina_task* task){
 	// printf("%s\n", task->name);
 	
 	tina_counter counter = {};
-	tina_tasks_enqueue(&TASKS, (tina_task[]){
+	tina_tasks_enqueue(TASKS, (tina_task[]){
 		{.func = TaskGeneric, .name = "Task1"},
 		{.func = TaskGeneric, .name = "Task2"},
 		{.func = TaskGeneric, .name = "Task3"},
@@ -41,11 +41,11 @@ static void TaskA(tina_task* task){
 		{.func = TaskGeneric, .name = "TaskF"},
 	}, 16 - 1, &counter);
 	
-	tina_tasks_wait(&TASKS, task, &counter);
+	tina_tasks_wait(TASKS, task, &counter);
 	
 	unsigned* countdown = task->ptr;
 	if(--*countdown){
-		tina_tasks_enqueue(&TASKS, (tina_task[]){
+		tina_tasks_enqueue(TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .ptr = countdown}
 		}, 1, NULL);
 	}
@@ -60,16 +60,18 @@ static int worker_thread(void* tasks){
 
 int main(int argc, const char *argv[]){
 	atomic_init(&COUNT, 0);
-	tina_tasks_init(&TASKS);
+	
+	void* buffer = malloc(tina_tasks_size(1024, 256, 64*1024));
+	TASKS = tina_tasks_init(buffer, 1024, 256, 64*1024);
 	
 	thrd_t workers[16];
-	for(int i = 0; i < 1; i++) thrd_create(&workers[i], worker_thread, &TASKS);
+	for(int i = 0; i < 1; i++) thrd_create(&workers[i], worker_thread, TASKS);
 	
 	unsigned parallel = 16;
 	unsigned repeat_counter[parallel];
 	for(int i = 0; i < parallel; i++){
 		repeat_counter[i] = 32000;
-		tina_tasks_enqueue(&TASKS, (tina_task[]){
+		tina_tasks_enqueue(TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .ptr = repeat_counter + i},
 		}, 1, NULL);
 	}
