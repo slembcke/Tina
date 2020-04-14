@@ -30,23 +30,22 @@ typedef struct {
 	unsigned task_head, task_tail, task_count;
 	
 	uint8_t MEMORY[MAX_COROS][STACK_SIZE];
-} task_system;
+} tina_tasks;
 
 struct tina_counter {
 	uintptr_t count;
 	tina_task* task;
 };
 
-void task_system_init(task_system *system);
-void task_system_queue_tasks(task_system* system, const tina_task* tasks, size_t task_count, tina_counter* counter);
-void task_system_run(task_system* system);
+void tina_tasks_init(tina_tasks *tasks);
+void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter);
+void tina_tasks_run(tina_tasks* tasks);
 
-static inline tina_counter task_counter_make(tina_task* task){ return (tina_counter){.task = task}; }
 void task_wait(tina_task* task, tina_counter* counter);
 
 //--
 
-task_system SYSTEM = {};
+tina_tasks SYSTEM = {};
 
 static void TaskGeneric(tina_task* task){
 	printf("%s\n", task->name);
@@ -55,8 +54,8 @@ static void TaskGeneric(tina_task* task){
 static void TaskA(tina_task* task){
 	printf("%s enter.\n", task->name);
 	
-	tina_counter counter = task_counter_make(task);
-	task_system_queue_tasks(&SYSTEM, (tina_task[]){
+	tina_counter counter = {};
+	tina_tasks_enqueue(&SYSTEM, (tina_task[]){
 		{.func = TaskGeneric, .name = "TaskB"},
 		{.func = TaskGeneric, .name = "TaskC"},
 		{.func = TaskGeneric, .name = "TaskD"},
@@ -66,7 +65,7 @@ static void TaskA(tina_task* task){
 	printf("%s queued and waiting.\n", task->name);
 	task_wait(task, &counter);
 	
-	task_system_queue_tasks(&SYSTEM, (tina_task[]){
+	tina_tasks_enqueue(&SYSTEM, (tina_task[]){
 		{.func = TaskA, .name = "TaskA",}
 	}, 1, NULL);
 	
@@ -74,13 +73,13 @@ static void TaskA(tina_task* task){
 }
 
 int main(int argc, const char *argv[]){
-	task_system_init(&SYSTEM);
+	tina_tasks_init(&SYSTEM);
 	
-	task_system_queue_tasks(&SYSTEM, (tina_task[]){
+	tina_tasks_enqueue(&SYSTEM, (tina_task[]){
 		{.func = TaskA, .name = "TaskA1"},
 	}, 1, NULL);
 	
-	task_system_run(&SYSTEM);
+	tina_tasks_run(&SYSTEM);
 	
 	return EXIT_SUCCESS;
 }
@@ -91,22 +90,22 @@ static unsigned tina_counter_decrement(tina_counter* counter){
 	return --(counter->count);
 }
 
-void task_system_queue_tasks(task_system* system, const tina_task* tasks, size_t task_count, tina_counter* counter){
+void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter){
 	if(counter){
 		assert(counter->count == 0);
-		counter->count =  task_count + 1;
+		counter->count =  count + 1;
 	}
 	
 	// TODO syncronized
-	unsigned head = system->task_head;
-	assert(system->task_count + task_count <= MAX_TASKS);
-	system->task_head = (head + task_count) & (MAX_TASKS - 1);
-	system->task_count += task_count;
+	unsigned head = tasks->task_head;
+	assert(tasks->task_count + count <= MAX_TASKS);
+	tasks->task_head = (head + count) & (MAX_TASKS - 1);
+	tasks->task_count += count;
 	
-	for(size_t i = 0; i < task_count; i++){
-		tina_task task = tasks[i];
+	for(size_t i = 0; i < count; i++){
+		tina_task task = list[i];
 		task._counter = counter;
-		system->tasks[(head + i) & (MAX_TASKS - 1)] = task;
+		tasks->tasks[(head + i) & (MAX_TASKS - 1)] = task;
 	}
 }
 
@@ -116,6 +115,9 @@ enum task_status {
 };
 
 void task_wait(tina_task* task, tina_counter* counter){
+	assert(counter->task == NULL);
+	counter->task = task;
+	
 	// If there are any unfinished tasks, yield.
 	if(tina_counter_decrement(counter) > 0){
 		// TODO syncronized
@@ -132,36 +134,37 @@ static uintptr_t task_body(tina* coro, uintptr_t value){
 	}
 }
 
-void task_system_init(task_system *system){
+void tina_tasks_init(tina_tasks *tasks){
 	for(unsigned i = 0; i < MAX_COROS; i++){
-		tina* coro = tina_init(system->MEMORY[i], STACK_SIZE, task_body, &system);
+		tina* coro = tina_init(tasks->MEMORY[i], STACK_SIZE, task_body, &tasks);
 		coro->name = "TASK WORKER";
-		system->coros[i] = coro;
+		tasks->coros[i] = coro;
 	}
-	system->coro_count = MAX_COROS;
+	tasks->coro_count = MAX_COROS;
 }
 
-void task_system_run(task_system* system){
+void tina_tasks_run(tina_tasks* tasks){
 	while(true){
-		// TODO I suppose the actual system should sleep here or something?
-		if(system->task_count == 0) break;
+		// TODO I suppose the actual tasks should sleep here or something?
+		if(tasks->task_count == 0) break;
 		
 		// Dequeue a task.
-		tina_task* task = &system->tasks[system->task_tail++ & (MAX_TASKS - 1)];
-		system->task_count--;
+		tina_task* task = &tasks->tasks[tasks->task_tail++ & (MAX_TASKS - 1)];
+		tasks->task_count--;
 		
 		// Dequeue a coro to run the task on.
-		assert(system->coro_count > 0);
-		task->_coro = system->coros[system->coro_tail++ & (MAX_COROS - 1)];
-		system->coro_count--;
+		assert(tasks->coro_count > 0);
+		task->_coro = tasks->coros[tasks->coro_tail++ & (MAX_COROS - 1)];
+		tasks->coro_count--;
 		
 		run_again: {
 			// Run the task.
 			enum task_status status = tina_yield(task->_coro, (uintptr_t)task);
 			
 			if(status = TASK_STATUS_FINISHED){
-				system->coros[system->coro_head++ & (MAX_COROS - 1)] = task->_coro;
-				system->coro_count++;
+				printf("putting the coro back\n");
+				tasks->coros[tasks->coro_head++ & (MAX_COROS - 1)] = task->_coro;
+				tasks->coro_count++;
 			}
 			
 			// Decrement the task's counter if it has one.
