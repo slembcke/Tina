@@ -63,12 +63,12 @@ int main(int argc, const char *argv[]){
 	tina_tasks_init(&TASKS);
 	
 	thrd_t workers[16];
-	for(int i = 0; i < 2; i++) thrd_create(&workers[i], worker_thread, &TASKS);
+	for(int i = 0; i < 1; i++) thrd_create(&workers[i], worker_thread, &TASKS);
 	
 	unsigned parallel = 16;
 	unsigned repeat_counter[parallel];
 	for(int i = 0; i < parallel; i++){
-		repeat_counter[i] = 64000;
+		repeat_counter[i] = 32000;
 		tina_tasks_enqueue(&TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .ptr = repeat_counter + i},
 		}, 1, NULL);

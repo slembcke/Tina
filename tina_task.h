@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include <threads.h>
 #include <assert.h>
 
@@ -25,19 +26,20 @@ struct tina_task {
 };
 
 typedef struct {
-	tina* coros[TINA_TASKS_MAX_COROS];
-	unsigned coro_head, coro_tail, coro_count;
-	
-	tina_task* pool[TINA_TASKS_MAX_TASKS];
-	unsigned pool_head, pool_tail, pool_count;
-	
-	tina_task* tasks[TINA_TASKS_MAX_TASKS];
-	unsigned task_head, task_tail, task_count;
+	void** arr;
+	size_t head, tail, count, capacity;
+} _tina_queue;
+
+typedef struct {
+	_tina_queue coro, pool, task;
 	
 	mtx_t lock;
 	cnd_t tasks_available;
 	uint8_t CORO_BUFFER[TINA_TASKS_MAX_COROS][TINA_TASKS_STACK_SIZE];
 	tina_task TASK_BUFFER[TINA_TASKS_MAX_TASKS];
+	void* COROQ_BUFFER[TINA_TASKS_MAX_COROS];
+	void* POOLQ_BUFFER[TINA_TASKS_MAX_TASKS];
+	void* TASKQ_BUFFER[TINA_TASKS_MAX_TASKS];
 } tina_tasks;
 
 struct tina_counter {
@@ -53,62 +55,68 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
 
 #ifdef TINA_IMPLEMENTATION
 
+static inline void _tina_enqueue(_tina_queue* queue, void* elt){
+	queue->count++;
+	queue->arr[queue->head++ & (queue->capacity - 1)] = elt;
+}
+
+static inline void* _tina_dequeue(_tina_queue* queue){
+	queue->count--;
+	return queue->arr[queue->tail++ & (queue->capacity - 1)];
+}
+
 static uintptr_t _task_body(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
 	
 	while(true){
 		mtx_unlock(&tasks->lock);
-		
 		tina_task* task = (tina_task*)value;
 		task->func(task);
-		
 		mtx_lock(&tasks->lock);
+		
 		value = tina_yield(coro, true);
 	}
 }
 
 void tina_tasks_init(tina_tasks *tasks){
-	// TODO this needs to be zeroed.
+	tasks->coro = (_tina_queue){.arr = tasks->COROQ_BUFFER, .capacity = TINA_TASKS_MAX_COROS};
+	tasks->pool = (_tina_queue){.arr = tasks->POOLQ_BUFFER, .capacity = TINA_TASKS_MAX_TASKS};
+	tasks->task = (_tina_queue){.arr = tasks->TASKQ_BUFFER, .capacity = TINA_TASKS_MAX_TASKS};
 	
+	tasks->coro.count = TINA_TASKS_MAX_COROS;
 	for(unsigned i = 0; i < TINA_TASKS_MAX_COROS; i++){
 		tina* coro = tina_init(tasks->CORO_BUFFER[i], TINA_TASKS_STACK_SIZE, _task_body, &tasks);
 		coro->name = "TINA TASK WORKER";
 		coro->user_data = tasks;
-		tasks->coros[i] = coro;
+		tasks->coro.arr[i] = coro;
 	}
-	tasks->coro_count = TINA_TASKS_MAX_COROS;
 	
-	for(unsigned i = 0; i < TINA_TASKS_MAX_TASKS; i++) tasks->pool[i] = &tasks->TASK_BUFFER[i];
-	tasks->pool_count = TINA_TASKS_MAX_TASKS;
+	tasks->pool.count = TINA_TASKS_MAX_TASKS;
+	for(unsigned i = 0; i < TINA_TASKS_MAX_TASKS; i++){
+		tasks->pool.arr[i] = &tasks->TASK_BUFFER[i];
+	}
 }
 
 void tina_tasks_worker_loop(tina_tasks* tasks){
 	mtx_lock(&tasks->lock);
 	while(true){
 		// Wait for a task to become available.
-		while(tasks->task_count == 0){
+		while(tasks->task.count == 0){
 			// TODO should be a timed wait to allow shutting down the thread.
 			cnd_wait(&tasks->tasks_available, &tasks->lock);
 		}
 		
 		// Dequeue a task and a coroutine to run it on.
-		tina_task* task = tasks->tasks[tasks->task_tail++ & (TINA_TASKS_MAX_TASKS - 1)];
-		tasks->task_count--;
-		
-		assert(tasks->coro_count > 0);
-		task->_coro = tasks->coros[tasks->coro_tail++ & (TINA_TASKS_MAX_COROS - 1)];
-		tasks->coro_count--;
+		tina_task* task = _tina_dequeue(&tasks->task);
+		task->_coro = _tina_dequeue(&tasks->coro);
 		
 		run_again: {
 			bool finished = tina_yield(task->_coro, (uintptr_t)task);
 			
 			if(finished){
 				// Task is finished. Return it and it's coroutine to the pool.
-				tasks->pool[tasks->pool_head++ & (TINA_TASKS_MAX_TASKS - 1)] = task;
-				tasks->pool_count++;
-				
-				tasks->coros[tasks->coro_head++ & (TINA_TASKS_MAX_COROS - 1)] = task->_coro;
-				tasks->coro_count++;
+				_tina_enqueue(&tasks->pool, task);
+				_tina_enqueue(&tasks->coro, task->_coro);
 				
 				tina_counter* counter = task->_counter;
 				if(counter){
@@ -126,18 +134,15 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	if(counter) counter->count = count + 1;
 	
 	mtx_lock(&tasks->lock);
-	assert(count <= tasks->pool_count);
+	assert(count <= tasks->pool.count);
 	
 	for(size_t i = 0; i < count; i++){
-		tina_task task_copy = list[i];
-		task_copy._counter = counter;
+		tina_task* task = _tina_dequeue(&tasks->pool);
+		_tina_enqueue(&tasks->task, task);
 		
-		tina_task* task = tasks->pool[tasks->pool_tail++ & (TINA_TASKS_MAX_TASKS - 1)];
-		tasks->pool_count--;
-		*task = task_copy;
-		
-		tasks->tasks[tasks->task_head++ & (TINA_TASKS_MAX_TASKS - 1)] = task;
-		tasks->task_count++;
+		tina_task copy = list[i];
+		copy._counter = counter;
+		*task = copy;
 	}
 	
 	cnd_broadcast(&tasks->tasks_available);

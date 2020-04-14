@@ -1,4 +1,4 @@
-CFLAGS = -g -O3
+CFLAGS = -g -O0
 
 .phony: clean default run
 
