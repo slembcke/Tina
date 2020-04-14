@@ -116,10 +116,7 @@ void tina_tasks_worker_loop(tina_tasks* tasks){
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter){
-	if(counter){
-		assert(counter->count == 0);
-		counter->count =  count + 1;
-	}
+	if(counter) atomic_init(&counter->count, count + 1);
 	
 	mtx_lock(&tasks->lock);
 	unsigned head = tasks->task_head;

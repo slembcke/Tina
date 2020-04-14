@@ -58,6 +58,7 @@ static int worker_thread(void* tasks){
 }
 
 int main(int argc, const char *argv[]){
+	atomic_init(&COUNT, 0);
 	tina_tasks_init(&TASKS);
 	
 	thrd_t workers[16];
