@@ -39,7 +39,7 @@ struct tina_counter {
 
 void tina_tasks_init(tina_tasks *tasks);
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter);
-void tina_tasks_run(tina_tasks* tasks);
+void tina_tasks_worker_loop(tina_tasks* tasks);
 
 void task_wait(tina_task* task, tina_counter* counter);
 
@@ -79,7 +79,7 @@ int main(int argc, const char *argv[]){
 		{.func = TaskA, .name = "TaskA1"},
 	}, 1, NULL);
 	
-	tina_tasks_run(&SYSTEM);
+	tina_tasks_worker_loop(&SYSTEM);
 	
 	return EXIT_SUCCESS;
 }
@@ -109,11 +109,6 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	}
 }
 
-enum task_status {
-	TASK_STATUS_FINISHED,
-	TASK_STATUS_WAITING,
-};
-
 void task_wait(tina_task* task, tina_counter* counter){
 	assert(counter->task == NULL);
 	counter->task = task;
@@ -121,7 +116,7 @@ void task_wait(tina_task* task, tina_counter* counter){
 	// If there are any unfinished tasks, yield.
 	if(tina_counter_decrement(counter) > 0){
 		// TODO syncronized
-		tina_yield(task->_coro, TASK_STATUS_WAITING);
+		tina_yield(task->_coro, false);
 	}
 }
 
@@ -130,48 +125,43 @@ static uintptr_t task_body(tina* coro, uintptr_t value){
 		tina_task* task = (tina_task*)value;
 		task->func(task);
 		
-		value = tina_yield(coro, TASK_STATUS_FINISHED);
+		value = tina_yield(coro, true);
 	}
 }
 
 void tina_tasks_init(tina_tasks *tasks){
 	for(unsigned i = 0; i < MAX_COROS; i++){
 		tina* coro = tina_init(tasks->MEMORY[i], STACK_SIZE, task_body, &tasks);
-		coro->name = "TASK WORKER";
+		coro->name = "TINA TASK WORKER";
 		tasks->coros[i] = coro;
 	}
 	tasks->coro_count = MAX_COROS;
 }
 
-void tina_tasks_run(tina_tasks* tasks){
+void tina_tasks_worker_loop(tina_tasks* tasks){
 	while(true){
-		// TODO I suppose the actual tasks should sleep here or something?
+		// TODO I suppose the thread should sleep here or something?
 		if(tasks->task_count == 0) break;
+		assert(tasks->coro_count > 0);
 		
-		// Dequeue a task.
+		// Dequeue a task and a coroutine to run it on.
 		tina_task* task = &tasks->tasks[tasks->task_tail++ & (MAX_TASKS - 1)];
 		tasks->task_count--;
 		
-		// Dequeue a coro to run the task on.
-		assert(tasks->coro_count > 0);
 		task->_coro = tasks->coros[tasks->coro_tail++ & (MAX_COROS - 1)];
 		tasks->coro_count--;
 		
 		run_again: {
-			// Run the task.
-			enum task_status status = tina_yield(task->_coro, (uintptr_t)task);
-			
-			if(status = TASK_STATUS_FINISHED){
-				printf("putting the coro back\n");
+			if(tina_yield(task->_coro, (uintptr_t)task)){
+				// Task is finished. Return the coroutine to the pool.
 				tasks->coros[tasks->coro_head++ & (MAX_COROS - 1)] = task->_coro;
 				tasks->coro_count++;
 			}
 			
-			// Decrement the task's counter if it has one.
 			tina_counter* counter = task->_counter;
 			if(counter){
 				task = counter->task;
-				// If it decrements to zero, then the waiting task is ready to run.
+				// This was the last task the counter was waiting on. Wake up the waiting task.
 				if(tina_counter_decrement(counter) == 0) goto run_again;
 			}
 		}
