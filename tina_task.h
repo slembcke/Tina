@@ -33,6 +33,7 @@ typedef struct {
 	unsigned task_head, task_tail, task_count;
 	
 	mtx_t lock;
+	cnd_t tasks_available;
 	uint8_t MEMORY[TINA_TASKS_MAX_COROS][TINA_TASKS_STACK_SIZE];
 } tina_tasks;
 
@@ -80,14 +81,17 @@ void tina_tasks_init(tina_tasks *tasks){
 void tina_tasks_worker_loop(tina_tasks* tasks){
 	mtx_lock(&tasks->lock);
 	while(true){
-		// TODO I suppose the thread should sleep here or something?
-		if(tasks->task_count == 0) break;
-		assert(tasks->coro_count > 0);
+		// Wait for a task to become available.
+		while(tasks->task_count == 0){
+			// TODO should be a timed wait to allow shutting down the thread.
+			cnd_wait(&tasks->tasks_available, &tasks->lock);
+		}
 		
 		// Dequeue a task and a coroutine to run it on.
 		tina_task* task = &tasks->tasks[tasks->task_tail++ & (TINA_TASKS_MAX_TASKS - 1)];
 		tasks->task_count--;
 		
+		assert(tasks->coro_count > 0);
 		task->_coro = tasks->coros[tasks->coro_tail++ & (TINA_TASKS_MAX_COROS - 1)];
 		tasks->coro_count--;
 		
@@ -128,6 +132,8 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 		task._counter = counter;
 		tasks->tasks[(head + i) & (TINA_TASKS_MAX_TASKS - 1)] = task;
 	}
+	
+	cnd_broadcast(&tasks->tasks_available);
 	mtx_unlock(&tasks->lock);
 }
 
