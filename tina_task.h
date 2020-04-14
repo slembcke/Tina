@@ -56,15 +56,15 @@ static unsigned _tina_counter_decrement(tina_counter* counter){
 
 static uintptr_t _task_body(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
-	mtx_unlock(&tasks->lock);
 	
 	while(true){
+		mtx_unlock(&tasks->lock);
+		
 		tina_task* task = (tina_task*)value;
 		task->func(task);
 		
 		mtx_lock(&tasks->lock);
 		value = tina_yield(coro, true);
-		mtx_unlock(&tasks->lock);
 	}
 }
 

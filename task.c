@@ -11,15 +11,15 @@
 #include "tina_task.h"
 
 tina_tasks TASKS = {};
-unsigned COUNT;
+atomic_uint COUNT;
 
 static void TaskGeneric(tina_task* task){
-	printf("%s\n", task->name);
-	COUNT++;
+	// printf("%s\n", task->name);
+	atomic_fetch_add(&COUNT, 1);
 }
 
 static void TaskA(tina_task* task){
-	printf("%s\n", task->name);
+	// printf("%s\n", task->name);
 	
 	tina_counter counter = {};
 	tina_tasks_enqueue(&TASKS, (tina_task[]){
@@ -38,7 +38,7 @@ static void TaskA(tina_task* task){
 		{.func = TaskGeneric, .name = "TaskD"},
 		{.func = TaskGeneric, .name = "TaskE"},
 		{.func = TaskGeneric, .name = "TaskF"},
-	}, 1, &counter);
+	}, 16 - 1, &counter);
 	
 	tina_tasks_wait(&TASKS, task, &counter);
 	
@@ -49,7 +49,7 @@ static void TaskA(tina_task* task){
 		}, 1, NULL);
 	}
 	
-	COUNT++;
+	atomic_fetch_add(&COUNT, 1);
 }
 
 static int worker_thread(void* tasks){
@@ -60,13 +60,13 @@ static int worker_thread(void* tasks){
 int main(int argc, const char *argv[]){
 	tina_tasks_init(&TASKS);
 	
-	thrd_t worker;
-	thrd_create(&worker, worker_thread, &TASKS);
+	thrd_t workers[16];
+	for(int i = 0; i < 3; i++) thrd_create(&workers[i], worker_thread, &TASKS);
 	
-	unsigned parallel = 1;
+	unsigned parallel = 16;
 	unsigned repeat_counter[parallel];
 	for(int i = 0; i < parallel; i++){
-		repeat_counter[i] = 4;
+		repeat_counter[i] = 32000;
 		tina_tasks_enqueue(&TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .ptr = repeat_counter + i},
 		}, 1, NULL);
@@ -75,6 +75,6 @@ int main(int argc, const char *argv[]){
 	puts("waiting");
 	thrd_sleep(&(struct timespec){.tv_sec = 1}, NULL);
 	
-	printf("exiting with count: %d", COUNT);
+	printf("exiting with count: %dK\n", COUNT/1000);
 	return EXIT_SUCCESS;
 }
