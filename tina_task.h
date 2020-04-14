@@ -104,6 +104,9 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 		buffer += sizeof(tina_task);
 	}
 	
+	mtx_init(&tasks->lock, mtx_plain);
+	cnd_init(&tasks->tasks_available);
+	
 	return tasks;
 }
 
@@ -136,7 +139,7 @@ void tina_tasks_worker_loop(tina_tasks* tasks){
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter){
-	if(counter) counter->count = count + 1;
+	if(counter) *counter = (tina_counter){.count = count + 1};
 	
 	mtx_lock(&tasks->lock);
 	assert(count <= tasks->pool.count);
