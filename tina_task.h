@@ -8,6 +8,8 @@
 #ifndef TINA_TASK_H
 #define TINA_TASK_H
 
+#define TINA_TASK_PRIORITIES 1
+
 typedef struct tina_tasks tina_tasks;
 typedef struct tina_task tina_task;
 typedef struct tina_counter tina_counter;
@@ -17,6 +19,7 @@ struct tina_task {
 	const char* name;
 	tina_task_func* func;
 	void* ptr;
+	uint8_t priority;
 	
 	tina* _coro;
 	tina_counter* _counter;
@@ -24,7 +27,7 @@ struct tina_task {
 
 typedef struct {
 	void** arr;
-	size_t head, tail, count, capacity;
+	uint16_t head, tail, count, capacity;
 } _tina_queue;
 
 struct tina_counter {
@@ -35,16 +38,21 @@ struct tina_counter {
 size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size);
 tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, size_t stack_size);
 void tina_tasks_worker_loop(tina_tasks* tasks);
+void tina_tasks_shutdown(tina_tasks* tasks);
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter);
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
 
 #ifdef TINA_IMPLEMENTATION
 
+// TODO reduce pointer bloat?
+// TODO What is a reasonable shutdown procedure?
+
 struct tina_tasks {
+	bool request_shutdown;
 	mtx_t lock;
-	cnd_t tasks_available;
-	_tina_queue coro, pool, task;
+	cnd_t wakeup;
+	_tina_queue coro, pool, task[TINA_TASK_PRIORITIES];
 };
 
 static inline void _tina_enqueue(_tina_queue* queue, void* elt){
@@ -73,7 +81,7 @@ static uintptr_t _task_body(tina* coro, uintptr_t value){
 
 size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
 	size_t size = sizeof(tina_tasks);
-	size += (coro_count + 2*task_count)*sizeof(void*);
+	size += (coro_count + task_count + TINA_TASK_PRIORITIES*task_count)*sizeof(void*);
 	size += coro_count*stack_size;
 	size += task_count*sizeof(tina_task);
 	return size;
@@ -86,8 +94,10 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	buffer += coro_count*sizeof(void*);
 	tasks->pool = (_tina_queue){.arr = buffer, .capacity = task_count};
 	buffer += task_count*sizeof(void*);
-	tasks->task = (_tina_queue){.arr = buffer, .capacity = task_count};
-	buffer += task_count*sizeof(void*);
+	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
+		tasks->task[i] = (_tina_queue){.arr = buffer, .capacity = task_count};
+		buffer += task_count*sizeof(void*);
+	}
 	
 	tasks->coro.count = coro_count;
 	for(unsigned i = 0; i < coro_count; i++){
@@ -105,34 +115,46 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	}
 	
 	mtx_init(&tasks->lock, mtx_plain);
-	cnd_init(&tasks->tasks_available);
+	cnd_init(&tasks->wakeup);
 	
 	return tasks;
+}
+
+void tina_tasks_shutdown(tina_tasks* tasks){
+	tasks->request_shutdown = true;
+	cnd_broadcast(&tasks->wakeup);
 }
 
 void tina_tasks_worker_loop(tina_tasks* tasks){
 	mtx_lock(&tasks->lock);
 	while(true){
-		while(tasks->task.count == 0){
-			// TODO should be a timed wait to allow shutting down the thread.
-			cnd_wait(&tasks->tasks_available, &tasks->lock);
+		if(tasks->request_shutdown) break;
+		
+		tina_task* task = NULL;
+		for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
+			if(tasks->task[i].count > 0){
+				task = _tina_dequeue(&tasks->task[i]);
+				break;
+			}
 		}
 		
-		tina_task* task = _tina_dequeue(&tasks->task);
-		task->_coro = _tina_dequeue(&tasks->coro);
-		
-		run_again: {
-			if(tina_yield(task->_coro, (uintptr_t)task)){
-				_tina_enqueue(&tasks->pool, task);
-				_tina_enqueue(&tasks->coro, task->_coro);
-				
-				tina_counter* counter = task->_counter;
-				if(counter){
-					task = counter->task;
-					// This was the last task the counter was waiting on. Wake up the waiting task.
-					if(--counter->count == 0) goto run_again;
+		if(task){
+			task->_coro = _tina_dequeue(&tasks->coro);
+			run_again: {
+				if(tina_yield(task->_coro, (uintptr_t)task)){
+					_tina_enqueue(&tasks->pool, task);
+					_tina_enqueue(&tasks->coro, task->_coro);
+					
+					tina_counter* counter = task->_counter;
+					if(counter){
+						task = counter->task;
+						// This was the last task the counter was waiting on. Wake up the waiting task.
+						if(--counter->count == 0) goto run_again;
+					}
 				}
 			}
+		} else {
+			cnd_wait(&tasks->wakeup, &tasks->lock);
 		}
 	}
 	mtx_unlock(&tasks->lock);
@@ -145,15 +167,16 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	assert(count <= tasks->pool.count);
 	
 	for(size_t i = 0; i < count; i++){
-		tina_task* task = _tina_dequeue(&tasks->pool);
-		_tina_enqueue(&tasks->task, task);
-		
 		tina_task copy = list[i];
 		copy._counter = counter;
+		
+		tina_task* task = _tina_dequeue(&tasks->pool);
 		*task = copy;
+		
+		_tina_enqueue(&tasks->task[copy.priority], task);
 	}
 	
-	cnd_broadcast(&tasks->tasks_available);
+	cnd_broadcast(&tasks->wakeup);
 	mtx_unlock(&tasks->lock);
 }
 

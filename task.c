@@ -55,6 +55,7 @@ static void TaskA(tina_task* task){
 
 static int worker_thread(void* tasks){
 	tina_tasks_worker_loop(tasks);
+	puts("thread exit");
 	return 0;
 }
 
@@ -65,12 +66,12 @@ int main(int argc, const char *argv[]){
 	TASKS = tina_tasks_init(buffer, 1024, 256, 64*1024);
 	
 	thrd_t workers[16];
-	for(int i = 0; i < 1; i++) thrd_create(&workers[i], worker_thread, TASKS);
+	for(int i = 0; i < 4; i++) thrd_create(&workers[i], worker_thread, TASKS);
 	
 	unsigned parallel = 16;
 	unsigned repeat_counter[parallel];
 	for(int i = 0; i < parallel; i++){
-		repeat_counter[i] = 32000;
+		repeat_counter[i] = 64000;
 		tina_tasks_enqueue(TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .ptr = repeat_counter + i},
 		}, 1, NULL);
@@ -78,6 +79,9 @@ int main(int argc, const char *argv[]){
 	
 	puts("waiting");
 	thrd_sleep(&(struct timespec){.tv_sec = 1}, NULL);
+	
+	tina_tasks_shutdown(TASKS);
+	for(int i = 0; i < 2; i++) thrd_join(workers[i], NULL);
 	
 	printf("exiting with count: %dK\n", COUNT/1000);
 	return EXIT_SUCCESS;
