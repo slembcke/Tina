@@ -6,7 +6,8 @@
 #ifndef TINA_TASK_H
 #define TINA_TASK_H
 
-#define TINA_TASK_PRIORITIES 1
+#define TINA_TASK_PRIORITIES 2
+enum {TINA_PRIORITY_HI, TINA_PRIORITY_LO};
 
 typedef struct tina_tasks tina_tasks;
 typedef struct tina_task tina_task;
@@ -24,14 +25,14 @@ struct tina_task {
 };
 
 struct tina_counter {
-	unsigned count;
-	tina_task* task;
+	unsigned _count;
+	tina_task* _task;
 };
 
 size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size);
 tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, size_t stack_size);
-void tina_tasks_worker_loop(tina_tasks* tasks);
-void tina_tasks_shutdown(tina_tasks* tasks);
+void tina_tasks_run(tina_tasks* tasks, bool flush);
+void tina_tasks_pause(tina_tasks* tasks);
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter);
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
@@ -50,8 +51,6 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
 
 #ifdef TINA_IMPLEMENTATION
 
-// TODO Reduce pointer bloat?
-// TODO What is a reasonable shutdown procedure?
 // TODO This probably doesn't compile as C++.
 
 typedef struct {
@@ -60,7 +59,7 @@ typedef struct {
 } _tina_queue;
 
 struct tina_tasks {
-	bool request_shutdown;
+	bool pause;
 	TINA_MUTEX_T lock;
 	TINA_SIGNAL_T wakeup;
 	_tina_queue coro, pool, task[TINA_TASK_PRIORITIES];
@@ -131,15 +130,19 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	return tasks;
 }
 
-void tina_tasks_shutdown(tina_tasks* tasks){
-	tasks->request_shutdown = true;
+void tina_tasks_pause(tina_tasks* tasks){
+	TINA_MUTEX_LOCK(tasks->lock);
+	tasks->pause = true;
 	TINA_SIGNAL_BROADCAST(tasks->wakeup);
+	TINA_MUTEX_UNLOCK(tasks->lock);
 }
 
-void tina_tasks_worker_loop(tina_tasks* tasks){
+void tina_tasks_run(tina_tasks* tasks, bool flush){
 	TINA_MUTEX_LOCK(tasks->lock);
+	tasks->pause = false;
+	
 	while(true){
-		if(tasks->request_shutdown) break;
+		if(tasks->pause) break;
 		
 		tina_task* task = NULL;
 		for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
@@ -158,12 +161,14 @@ void tina_tasks_worker_loop(tina_tasks* tasks){
 					
 					tina_counter* counter = task->_counter;
 					if(counter){
-						task = counter->task;
+						task = counter->_task;
 						// This was the last task the counter was waiting on. Wake up the waiting task.
-						if(--counter->count == 0) goto run_again;
+						if(--counter->_count == 0) goto run_again;
 					}
 				}
 			}
+		} else if(flush){
+			break;
 		} else {
 			TINA_SIGNAL_WAIT(tasks->wakeup, tasks->lock);
 		}
@@ -172,11 +177,9 @@ void tina_tasks_worker_loop(tina_tasks* tasks){
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter){
-	if(counter) *counter = (tina_counter){.count = count + 1};
+	if(counter) *counter = (tina_counter){._count = count + 1};
 	
 	TINA_MUTEX_LOCK(tasks->lock);
-	assert(count <= tasks->pool.count);
-	
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
 		copy._counter = counter;
@@ -186,17 +189,16 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 		
 		_tina_enqueue(&tasks->task[copy.priority], task);
 	}
-	
 	TINA_SIGNAL_BROADCAST(tasks->wakeup);
 	TINA_MUTEX_UNLOCK(tasks->lock);
 }
 
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter){
-	assert(counter->task == NULL);
-	counter->task = task;
+	TINA_ASSERT(counter->_task == NULL, "Counter already used.");
+	counter->_task = task;
 	
 	TINA_MUTEX_LOCK(tasks->lock);
-	if(--counter->count > 0) tina_yield(counter->task->_coro, false);
+	if(--counter->_count > 0) tina_yield(counter->_task->_coro, false);
 	TINA_MUTEX_UNLOCK(tasks->lock);
 }
 
