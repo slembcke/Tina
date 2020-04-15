@@ -77,7 +77,7 @@ static inline void* _tina_dequeue(_tina_queue* queue){
 	return queue->arr[queue->tail++ & (queue->capacity - 1)];
 }
 
-static uintptr_t _task_body(tina* coro, uintptr_t value){
+static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
 	while(true){
 		TINA_MUTEX_UNLOCK(tasks->_lock);
@@ -87,6 +87,8 @@ static uintptr_t _task_body(tina* coro, uintptr_t value){
 		
 		value = tina_yield(coro, true);
 	}
+	
+	return true;
 }
 
 size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
@@ -111,7 +113,7 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	
 	tasks->_coro.count = coro_count;
 	for(unsigned i = 0; i < coro_count; i++){
-		tina* coro = tina_init(buffer, stack_size, _task_body, &tasks);
+		tina* coro = tina_init(buffer, stack_size, _tina_task_worker, &tasks);
 		coro->name = "TINA TASK WORKER";
 		coro->user_data = tasks;
 		tasks->_coro.arr[i] = coro;

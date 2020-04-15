@@ -1,4 +1,4 @@
-CFLAGS = -g -O0
+CFLAGS = -Wall -g -O0
 
 .phony: clean default run
 
