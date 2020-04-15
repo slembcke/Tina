@@ -28,6 +28,7 @@ struct tina {
 	
 	// Private implementation details.
 	void* _sp;
+	uint32_t _magic;
 };
 
 // Initialize a coroutine and return a pointer to it.
@@ -45,8 +46,14 @@ void tina_free(tina* coro);
 extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
 
+#ifndef _TINA_ASSERT
+#define _TINA_ASSERT(_COND_, _MESSAGE_) {if(!(_COND_)){puts(_MESSAGE_); abort();}}
+#endif
+
 // Yield execution to a coroutine.
 static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
+	_TINA_ASSERT(coro->_magic == 0x54494E41u, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
+	
 	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
 	swap_func* swap = ((swap_func*)(void*)_tina_swap);
 	return swap(coro, value, &coro->_sp);
@@ -61,6 +68,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->running = true;
+	coro->_magic = 0x54494E41u;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
 	init_func* init = ((init_func*)(void*)_tina_init_stack);
@@ -102,7 +110,7 @@ void _tina_context(tina* coro, tina_func* body){
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.
 	
-	// Since the arm version is by far the shortest, I'll document this one.
+	// Since the 32 bit ARM version is by far the shortest, I'll document this one.
 	// The other variations are basically the same structurally.
 	
 	// _tina_init_stack() sets up the stack and initial execution of the coroutine.

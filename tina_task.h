@@ -63,15 +63,14 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group);
 #ifdef TINA_IMPLEMENTATION
 
 // Override these. Based on C11 primitives.
-#define TINA_ASSERT(_COND_, _MESSAGE_) {if(!(_COND_)){puts(_MESSAGE_); abort();}}
-#define TINA_MUTEX_T mtx_t
-#define TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
-#define TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
-#define TINA_MUTEX_UNLOCK(_LOCK_) mtx_unlock(&_LOCK_)
-#define TINA_SIGNAL_T cnd_t
-#define TINA_SIGNAL_INIT(_SIG_) cnd_init(&_SIG_)
-#define TINA_SIGNAL_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
-#define TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
+#define _TINA_MUTEX_T mtx_t
+#define _TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
+#define _TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
+#define _TINA_MUTEX_UNLOCK(_LOCK_) mtx_unlock(&_LOCK_)
+#define _TINA_SIGNAL_T cnd_t
+#define _TINA_SIGNAL_INIT(_SIG_) cnd_init(&_SIG_)
+#define _TINA_SIGNAL_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
+#define _TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 
 // TODO This probably doesn't compile as C++.
 // TODO Overflow and POT checks for task/coro counts?
@@ -83,21 +82,21 @@ typedef struct {
 } _tina_queue;
 
 static inline void _tina_enqueue(_tina_queue* queue, void* elt){
-	TINA_ASSERT(queue->count < queue->capacity, "Tina Task Error: Queue overflow");
+	_TINA_ASSERT(queue->count < queue->capacity, "Tina Task Error: Queue overflow");
 	queue->count++;
 	queue->arr[queue->head++ & (queue->capacity - 1)] = elt;
 }
 
 static inline void* _tina_dequeue(_tina_queue* queue){
-	TINA_ASSERT(queue->count > 0, "Tina Task Error: Queue underflow.");
+	_TINA_ASSERT(queue->count > 0, "Tina Task Error: Queue underflow.");
 	queue->count--;
 	return queue->arr[queue->tail++ & (queue->capacity - 1)];
 }
 
 struct tina_tasks {
 	bool _pause;
-	TINA_MUTEX_T _lock;
-	TINA_SIGNAL_T _wakeup;
+	_TINA_MUTEX_T _lock;
+	_TINA_SIGNAL_T _wakeup;
 	_tina_queue _coro, _pool, _task[TINA_TASK_PRIORITIES];
 };
 
@@ -105,10 +104,10 @@ static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
 	while(true){
 		// Unlock the mutex while executing a task.
-		TINA_MUTEX_UNLOCK(tasks->_lock);
+		_TINA_MUTEX_UNLOCK(tasks->_lock);
 		tina_task* task = (tina_task*)value;
 		task->func(task);
-		TINA_MUTEX_LOCK(tasks->_lock);
+		_TINA_MUTEX_LOCK(tasks->_lock);
 		
 		// Yield true (task completed) back to the tasks system, and recieve the next task.
 		value = tina_yield(coro, true);
@@ -157,17 +156,17 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 		buffer += sizeof(tina_task);
 	}
 	
-	TINA_MUTEX_INIT(tasks->_lock);
-	TINA_SIGNAL_INIT(tasks->_wakeup);
+	_TINA_MUTEX_INIT(tasks->_lock);
+	_TINA_SIGNAL_INIT(tasks->_wakeup);
 	
 	return tasks;
 }
 
 void tina_tasks_pause(tina_tasks* tasks){
-	TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_MUTEX_LOCK(tasks->_lock);
 	tasks->_pause = true;
-	TINA_SIGNAL_BROADCAST(tasks->_wakeup);
-	TINA_MUTEX_UNLOCK(tasks->_lock);
+	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks){
@@ -193,7 +192,7 @@ static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task){
 
 void tina_tasks_run(tina_tasks* tasks, bool flush){
 	// Task loop is only unlocked while running a task or waiting for a wakeup.
-	TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_MUTEX_LOCK(tasks->_lock);
 	
 	tasks->_pause = false;
 	while(!tasks->_pause){
@@ -205,38 +204,39 @@ void tina_tasks_run(tina_tasks* tasks, bool flush){
 		} else if(flush){
 			break;
 		} else {
-			TINA_SIGNAL_WAIT(tasks->_wakeup, tasks->_lock);
+			_TINA_SIGNAL_WAIT(tasks->_wakeup, tasks->_lock);
 		}
 	}
 	
-	TINA_MUTEX_UNLOCK(tasks->_lock);
+	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
 	// count + 1 because tina_tasks_wait() also decrements the count.
 	if(group) *group = (tina_group){._count = count + 1};
 	
-	TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_MUTEX_LOCK(tasks->_lock);
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
+		_TINA_ASSERT(copy.func, "Tina Task Error: Task enqueued without a function.");
 		copy._group = group;
 		
 		tina_task* task = _tina_dequeue(&tasks->_pool);
 		_tina_enqueue(&tasks->_task[copy.priority], task);
 		*task = copy;
 	}
-	TINA_SIGNAL_BROADCAST(tasks->_wakeup);
-	TINA_MUTEX_UNLOCK(tasks->_lock);
+	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group){
-	TINA_ASSERT(group->_task == NULL, "Tina Task Error: Groups cannot be reused.");
+	_TINA_ASSERT(group->_task == NULL, "Tina Task Error: Groups cannot be reused.");
 	
-	TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_MUTEX_LOCK(tasks->_lock);
 	group->_task = task;
 	// Only yield if there are tasks still running.
 	if(--group->_count > 0) tina_yield(group->_task->_coro, false);
-	TINA_MUTEX_UNLOCK(tasks->_lock);
+	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task){

@@ -59,8 +59,9 @@ static int worker_thread(void* tasks){
 int main(int argc, const char *argv[]){
 	atomic_init(&COUNT, 0);
 	
-	void* buffer = malloc(tina_tasks_size(1024, 256, 64*1024));
-	TASKS = tina_tasks_init(buffer, 1024, 256, 64*1024);
+	size_t task_count = 1024, coroutine_count = 64, stack_size = 64*1024;
+	void* buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
+	TASKS = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
 	
 	int worker_count = 4;
 	thrd_t workers[16];
