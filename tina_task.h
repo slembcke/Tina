@@ -59,10 +59,10 @@ typedef struct {
 } _tina_queue;
 
 struct tina_tasks {
-	bool pause;
-	TINA_MUTEX_T lock;
-	TINA_SIGNAL_T wakeup;
-	_tina_queue coro, pool, task[TINA_TASK_PRIORITIES];
+	bool _pause;
+	TINA_MUTEX_T _lock;
+	TINA_SIGNAL_T _wakeup;
+	_tina_queue _coro, _pool, _task[TINA_TASK_PRIORITIES];
 };
 
 static inline void _tina_enqueue(_tina_queue* queue, void* elt){
@@ -80,10 +80,10 @@ static inline void* _tina_dequeue(_tina_queue* queue){
 static uintptr_t _task_body(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
 	while(true){
-		TINA_MUTEX_UNLOCK(tasks->lock);
+		TINA_MUTEX_UNLOCK(tasks->_lock);
 		tina_task* task = (tina_task*)value;
 		task->func(task);
-		TINA_MUTEX_LOCK(tasks->lock);
+		TINA_MUTEX_LOCK(tasks->_lock);
 		
 		value = tina_yield(coro, true);
 	}
@@ -100,64 +100,64 @@ size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
 tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, size_t stack_size){
 	tina_tasks* tasks = memset(buffer, 0, tina_tasks_size(task_count, coro_count, stack_size));
 	buffer += sizeof(tina_tasks);
-	tasks->coro = (_tina_queue){.arr = buffer, .capacity = coro_count};
+	tasks->_coro = (_tina_queue){.arr = buffer, .capacity = coro_count};
 	buffer += coro_count*sizeof(void*);
-	tasks->pool = (_tina_queue){.arr = buffer, .capacity = task_count};
+	tasks->_pool = (_tina_queue){.arr = buffer, .capacity = task_count};
 	buffer += task_count*sizeof(void*);
 	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
-		tasks->task[i] = (_tina_queue){.arr = buffer, .capacity = task_count};
+		tasks->_task[i] = (_tina_queue){.arr = buffer, .capacity = task_count};
 		buffer += task_count*sizeof(void*);
 	}
 	
-	tasks->coro.count = coro_count;
+	tasks->_coro.count = coro_count;
 	for(unsigned i = 0; i < coro_count; i++){
 		tina* coro = tina_init(buffer, stack_size, _task_body, &tasks);
 		coro->name = "TINA TASK WORKER";
 		coro->user_data = tasks;
-		tasks->coro.arr[i] = coro;
+		tasks->_coro.arr[i] = coro;
 		buffer += stack_size;
 	}
 	
-	tasks->pool.count = task_count;
+	tasks->_pool.count = task_count;
 	for(unsigned i = 0; i < task_count; i++){
-		tasks->pool.arr[i] = buffer;
+		tasks->_pool.arr[i] = buffer;
 		buffer += sizeof(tina_task);
 	}
 	
-	TINA_MUTEX_INIT(tasks->lock);
-	TINA_SIGNAL_INIT(tasks->wakeup);
+	TINA_MUTEX_INIT(tasks->_lock);
+	TINA_SIGNAL_INIT(tasks->_wakeup);
 	
 	return tasks;
 }
 
 void tina_tasks_pause(tina_tasks* tasks){
-	TINA_MUTEX_LOCK(tasks->lock);
-	tasks->pause = true;
-	TINA_SIGNAL_BROADCAST(tasks->wakeup);
-	TINA_MUTEX_UNLOCK(tasks->lock);
+	TINA_MUTEX_LOCK(tasks->_lock);
+	tasks->_pause = true;
+	TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_run(tina_tasks* tasks, bool flush){
-	TINA_MUTEX_LOCK(tasks->lock);
-	tasks->pause = false;
+	TINA_MUTEX_LOCK(tasks->_lock);
+	tasks->_pause = false;
 	
 	while(true){
-		if(tasks->pause) break;
+		if(tasks->_pause) break;
 		
 		tina_task* task = NULL;
 		for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
-			if(tasks->task[i].count > 0){
-				task = _tina_dequeue(&tasks->task[i]);
+			if(tasks->_task[i].count > 0){
+				task = _tina_dequeue(&tasks->_task[i]);
 				break;
 			}
 		}
 		
 		if(task){
-			task->_coro = _tina_dequeue(&tasks->coro);
+			task->_coro = _tina_dequeue(&tasks->_coro);
 			run_again: {
 				if(tina_yield(task->_coro, (uintptr_t)task)){
-					_tina_enqueue(&tasks->pool, task);
-					_tina_enqueue(&tasks->coro, task->_coro);
+					_tina_enqueue(&tasks->_pool, task);
+					_tina_enqueue(&tasks->_coro, task->_coro);
 					
 					tina_counter* counter = task->_counter;
 					if(counter){
@@ -170,36 +170,36 @@ void tina_tasks_run(tina_tasks* tasks, bool flush){
 		} else if(flush){
 			break;
 		} else {
-			TINA_SIGNAL_WAIT(tasks->wakeup, tasks->lock);
+			TINA_SIGNAL_WAIT(tasks->_wakeup, tasks->_lock);
 		}
 	}
-	TINA_MUTEX_UNLOCK(tasks->lock);
+	TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter){
 	if(counter) *counter = (tina_counter){._count = count + 1};
 	
-	TINA_MUTEX_LOCK(tasks->lock);
+	TINA_MUTEX_LOCK(tasks->_lock);
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
 		copy._counter = counter;
 		
-		tina_task* task = _tina_dequeue(&tasks->pool);
+		tina_task* task = _tina_dequeue(&tasks->_pool);
 		*task = copy;
 		
-		_tina_enqueue(&tasks->task[copy.priority], task);
+		_tina_enqueue(&tasks->_task[copy.priority], task);
 	}
-	TINA_SIGNAL_BROADCAST(tasks->wakeup);
-	TINA_MUTEX_UNLOCK(tasks->lock);
+	TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter){
 	TINA_ASSERT(counter->_task == NULL, "Counter already used.");
 	counter->_task = task;
 	
-	TINA_MUTEX_LOCK(tasks->lock);
+	TINA_MUTEX_LOCK(tasks->_lock);
 	if(--counter->_count > 0) tina_yield(counter->_task->_coro, false);
-	TINA_MUTEX_UNLOCK(tasks->lock);
+	TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
