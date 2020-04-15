@@ -46,9 +46,7 @@ void tina_free(tina* coro);
 extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
 
-#ifndef _TINA_ASSERT
-#define _TINA_ASSERT(_COND_, _MESSAGE_) {if(!(_COND_)){puts(_MESSAGE_); abort();}}
-#endif
+#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
 
 // Yield execution to a coroutine.
 static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
@@ -60,9 +58,6 @@ static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
 }
 
 #ifdef TINA_IMPLEMENTATION
-
-// TODO: Are there any relevant ABIs that aren't 16 byte aligned, downward moving stacks?
-// TODO: Is it worthwhile to try and detect stack overflows?
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;

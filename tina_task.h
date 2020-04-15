@@ -130,6 +130,9 @@ size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
 }
 
 tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, size_t stack_size){
+	_TINA_ASSERT((task_count & (task_count - 1)) == 0, "Tina Task Error: Task count must be a power of two.");
+	_TINA_ASSERT((coro_count & (coro_count - 1)) == 0, "Tina Task Error: Coroutine count must be a power of two.");
+	
 	tina_tasks* tasks = buffer;
 	buffer += sizeof(tina_tasks);
 	tasks->_coro = (_tina_queue){.arr = buffer, .capacity = coro_count};
@@ -234,8 +237,10 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group){
 	
 	_TINA_MUTEX_LOCK(tasks->_lock);
 	group->_task = task;
-	// Only yield if there are tasks still running.
-	if(--group->_count > 0) tina_yield(group->_task->_coro, false);
+	if(--group->_count > 0){
+		// There are still tasks running. Yield false (task not complete) back to the tasks system.
+		tina_yield(group->_task->_coro, false);
+	}
 	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
