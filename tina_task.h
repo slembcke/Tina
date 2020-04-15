@@ -62,6 +62,8 @@ void tina_tasks_pause(tina_tasks* tasks);
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group);
 // Yield the current task until the group of tasks finish.
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group);
+// Similar to pthread_join() as a convenience method. Enqueues some tasks and waits on them.
+void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task);
 
 #ifdef TINA_IMPLEMENTATION
 
