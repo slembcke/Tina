@@ -23,12 +23,15 @@ typedef void tina_task_func(tina_task* task);
 struct tina_task {
 	// Task name. (optional)
 	const char* name;
-	// Task function.
+	// Task body function.
 	tina_task_func* func;
 	// Task context pointer.
-	void* ptr;
+	void* data;
 	// Priority of the task. Must be less than TINA_TASK_PRIORITIES.
 	uint8_t priority;
+	// Context pointer passed to the tina_tasks_run(). (readonly)
+	// Intended to be used like thread local storage, but without needing a global variable.
+	void* thread_data;
 	
 	// Private fields.
 	tina* _coro;
@@ -51,7 +54,7 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 // Execute tasks continuously on the current thread.
 // Only returns if tina_tasks_pause() is called, or if the queue becomes empty and 'flush' is true.
 // Run this on each of your worker threads.
-void tina_tasks_run(tina_tasks* tasks, bool flush);
+void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data);
 // Pause execution of tasks on all threads as soon as their current tasks finish.
 void tina_tasks_pause(tina_tasks* tasks);
 
@@ -181,7 +184,10 @@ static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks){
 	return NULL;
 }
 
-static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task){
+static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task, void* thread_data){
+	// Update the thread data.
+	task->thread_data = thread_data;
+	
 	if(tina_yield(task->_coro, (uintptr_t)task)){
 		// This task has completed. Return it to the pool.
 		_tina_enqueue(&tasks->_pool, task);
@@ -189,11 +195,11 @@ static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task){
 		
 		// Did it have a group, and was it the last task being waited for?
 		tina_group* group = task->_group;
-		if(group && --group->_count == 0) _tina_tasks_execute_task(tasks, group->_task);
+		if(group && --group->_count == 0) _tina_tasks_execute_task(tasks, group->_task, thread_data);
 	}
 }
 
-void tina_tasks_run(tina_tasks* tasks, bool flush){
+void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data){
 	// Task loop is only unlocked while running a task or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(tasks->_lock);
 	
@@ -203,7 +209,7 @@ void tina_tasks_run(tina_tasks* tasks, bool flush){
 		if(task){
 			// Assign a coroutine to the task and run it.
 			task->_coro = _tina_dequeue(&tasks->_coro);
-			_tina_tasks_execute_task(tasks, task);
+			_tina_tasks_execute_task(tasks, task, thread_data);
 		} else if(flush){
 			break;
 		} else {

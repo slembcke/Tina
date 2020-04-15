@@ -41,10 +41,10 @@ static void TaskA(tina_task* task){
 		{.func = TaskGeneric, .name = "TaskF"},
 	}, 16 - 1, task);
 	
-	unsigned* countdown = task->ptr;
+	unsigned* countdown = task->data;
 	if(--*countdown){
 		tina_tasks_enqueue(TASKS, (tina_task[]){
-			{.name = "Task0", .func = TaskA, .ptr = countdown}
+			{.name = "Task0", .func = TaskA, .data = countdown}
 		}, 1, NULL);
 	}
 	
@@ -52,7 +52,7 @@ static void TaskA(tina_task* task){
 }
 
 static int worker_thread(void* tasks){
-	tina_tasks_run(tasks, false);
+	tina_tasks_run(tasks, false, NULL);
 	return 0;
 }
 
@@ -72,7 +72,7 @@ int main(int argc, const char *argv[]){
 	for(int i = 0; i < parallel; i++){
 		repeat_group[i] = 64000;
 		tina_tasks_enqueue(TASKS, (tina_task[]){
-			{.name = "Task0", .func = TaskA, .ptr = repeat_group + i},
+			{.name = "Task0", .func = TaskA, .data = repeat_group + i},
 		}, 1, NULL);
 	}
 	
