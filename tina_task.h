@@ -1,6 +1,5 @@
 #include <stdint.h>
 #include <string.h>
-#include <assert.h>
 
 #include "tina.h"
 
@@ -37,6 +36,8 @@ void tina_tasks_shutdown(tina_tasks* tasks);
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_counter* counter);
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
 
+#define TINA_ASSERT(_COND_, _MESSAGE_) {if(!(_COND_)){puts(_MESSAGE_); abort();}}
+
 #define TINA_MUTEX_T mtx_t
 #define TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
 #define TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
@@ -49,8 +50,9 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_counter* counter);
 
 #ifdef TINA_IMPLEMENTATION
 
-// TODO reduce pointer bloat?
+// TODO Reduce pointer bloat?
 // TODO What is a reasonable shutdown procedure?
+// TODO This probably doesn't compile as C++.
 
 typedef struct {
 	void** arr;
@@ -65,13 +67,13 @@ struct tina_tasks {
 };
 
 static inline void _tina_enqueue(_tina_queue* queue, void* elt){
-	assert(queue->count < queue->capacity);
+	TINA_ASSERT(queue->count < queue->capacity, "Queue overflow");
 	queue->count++;
 	queue->arr[queue->head++ & (queue->capacity - 1)] = elt;
 }
 
 static inline void* _tina_dequeue(_tina_queue* queue){
-	assert(queue->count > 0);
+	TINA_ASSERT(queue->count > 0, "Queue overflow.");
 	queue->count--;
 	return queue->arr[queue->tail++ & (queue->capacity - 1)];
 }

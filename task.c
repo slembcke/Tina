@@ -65,8 +65,9 @@ int main(int argc, const char *argv[]){
 	void* buffer = malloc(tina_tasks_size(1024, 256, 64*1024));
 	TASKS = tina_tasks_init(buffer, 1024, 256, 64*1024);
 	
+	int worker_count = 1;
 	thrd_t workers[16];
-	for(int i = 0; i < 4; i++) thrd_create(&workers[i], worker_thread, TASKS);
+	for(int i = 0; i < worker_count; i++) thrd_create(&workers[i], worker_thread, TASKS);
 	
 	unsigned parallel = 16;
 	unsigned repeat_counter[parallel];
@@ -81,7 +82,7 @@ int main(int argc, const char *argv[]){
 	thrd_sleep(&(struct timespec){.tv_sec = 1}, NULL);
 	
 	tina_tasks_shutdown(TASKS);
-	for(int i = 0; i < 2; i++) thrd_join(workers[i], NULL);
+	for(int i = 0; i < worker_count; i++) thrd_join(workers[i], NULL);
 	
 	printf("exiting with count: %dK\n", COUNT/1000);
 	return EXIT_SUCCESS;
