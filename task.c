@@ -16,14 +16,14 @@ atomic_uint COUNT;
 static void TaskGeneric(tina_task* task){
 	// printf("%s\n", task->name);
 	// thrd_sleep(&(struct timespec){.tv_nsec = 10}, NULL);
+	thrd_yield();
 	atomic_fetch_add(&COUNT, 1);
 }
 
 static void TaskA(tina_task* task){
 	// printf("%s\n", task->name);
 	
-	tina_counter counter = {};
-	tina_tasks_enqueue(TASKS, (tina_task[]){
+	tina_tasks_join(TASKS, (tina_task[]){
 		{.func = TaskGeneric, .name = "Task1"},
 		{.func = TaskGeneric, .name = "Task2"},
 		{.func = TaskGeneric, .name = "Task3"},
@@ -39,9 +39,7 @@ static void TaskA(tina_task* task){
 		{.func = TaskGeneric, .name = "TaskD"},
 		{.func = TaskGeneric, .name = "TaskE"},
 		{.func = TaskGeneric, .name = "TaskF"},
-	}, 16 - 1, &counter);
-	
-	tina_tasks_wait(TASKS, task, &counter);
+	}, 16 - 1, task);
 	
 	unsigned* countdown = task->ptr;
 	if(--*countdown){
@@ -69,11 +67,11 @@ int main(int argc, const char *argv[]){
 	for(int i = 0; i < worker_count; i++) thrd_create(&workers[i], worker_thread, TASKS);
 	
 	unsigned parallel = 16;
-	unsigned repeat_counter[parallel];
+	unsigned repeat_group[parallel];
 	for(int i = 0; i < parallel; i++){
-		repeat_counter[i] = 64000;
+		repeat_group[i] = 64000;
 		tina_tasks_enqueue(TASKS, (tina_task[]){
-			{.name = "Task0", .func = TaskA, .ptr = repeat_counter + i},
+			{.name = "Task0", .func = TaskA, .ptr = repeat_group + i},
 		}, 1, NULL);
 	}
 	
