@@ -70,7 +70,7 @@ int main(int argc, const char *argv[]){
 	unsigned parallel = 16;
 	unsigned repeat_group[parallel];
 	for(int i = 0; i < parallel; i++){
-		repeat_group[i] = 64000;
+		repeat_group[i] = 128000;
 		tina_tasks_enqueue(TASKS, (tina_task[]){
 			{.name = "Task0", .func = TaskA, .data = repeat_group + i},
 		}, 1, NULL);

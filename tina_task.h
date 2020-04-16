@@ -78,31 +78,27 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 #define _TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 
 // TODO This probably doesn't compile as C++.
-// TODO Overflow and POT checks for task/coro counts?
+
+typedef struct {
+	void** arr;
+	size_t count;
+} _tina_stack;
 
 // Simple power of two circular queues.
 typedef struct {
 	void** arr;
-	uint16_t head, tail, count, capacity;
+	size_t head, tail, count, mask;
 } _tina_queue;
 
-static inline void _tina_enqueue(_tina_queue* queue, void* elt){
-	_TINA_ASSERT(queue->count < queue->capacity, "Tina Task Error: Queue overflow");
-	queue->count++;
-	queue->arr[queue->head++ & (queue->capacity - 1)] = elt;
-}
-
-static inline void* _tina_dequeue(_tina_queue* queue){
-	_TINA_ASSERT(queue->count > 0, "Tina Task Error: Queue underflow.");
-	queue->count--;
-	return queue->arr[queue->tail++ & (queue->capacity - 1)];
-}
-
 struct tina_tasks {
+	// Thread control variables.
 	bool _pause;
 	_TINA_MUTEX_T _lock;
 	_TINA_SIGNAL_T _wakeup;
-	_tina_queue _coro, _pool, _task[TINA_TASK_PRIORITIES];
+	
+	// Keep the tasks and coroutine pools in a stack so recently used items are fresh in the cache.
+	_tina_stack _coro, _pool;
+	_tina_queue _task[TINA_TASK_PRIORITIES];
 };
 
 static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
@@ -136,19 +132,20 @@ size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
 
 tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, size_t stack_size){
 	_TINA_ASSERT((task_count & (task_count - 1)) == 0, "Tina Task Error: Task count must be a power of two.");
-	_TINA_ASSERT((coro_count & (coro_count - 1)) == 0, "Tina Task Error: Coroutine count must be a power of two.");
 	
+	// Sub allocate all of the memory for the various arrays.
 	tina_tasks* tasks = buffer;
 	buffer += sizeof(tina_tasks);
-	tasks->_coro = (_tina_queue){.arr = buffer, .capacity = coro_count};
+	tasks->_coro = (_tina_stack){.arr = buffer};
 	buffer += coro_count*sizeof(void*);
-	tasks->_pool = (_tina_queue){.arr = buffer, .capacity = task_count};
+	tasks->_pool = (_tina_stack){.arr = buffer};
 	buffer += task_count*sizeof(void*);
 	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
-		tasks->_task[i] = (_tina_queue){.arr = buffer, .capacity = task_count};
+		tasks->_task[i] = (_tina_queue){.arr = buffer, .mask = task_count - 1};
 		buffer += task_count*sizeof(void*);
 	}
 	
+	// Initialize the coroutines and fill the pool.
 	tasks->_coro.count = coro_count;
 	for(unsigned i = 0; i < coro_count; i++){
 		tina* coro = tina_init(buffer, stack_size, _tina_task_worker, &tasks);
@@ -158,12 +155,14 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 		buffer += stack_size;
 	}
 	
+	// Fill the task pool.
 	tasks->_pool.count = task_count;
 	for(unsigned i = 0; i < task_count; i++){
 		tasks->_pool.arr[i] = buffer;
 		buffer += sizeof(tina_task);
 	}
 	
+	// Initialize the control variables.
 	_TINA_MUTEX_INIT(tasks->_lock);
 	_TINA_SIGNAL_INIT(tasks->_wakeup);
 	
@@ -180,7 +179,12 @@ void tina_tasks_pause(tina_tasks* tasks){
 static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks){
 	// Linear search of the task queues in priority order until a task is found.
 	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
-		if(tasks->_task[i].count > 0) return _tina_dequeue(&tasks->_task[i]);
+		_tina_queue* queue = &tasks->_task[i];
+		if(queue->count > 0){
+			// Dequeue a task.
+			queue->count--;
+			return queue->arr[queue->tail++ & queue->mask];
+		}
 	}
 	
 	return NULL;
@@ -192,8 +196,8 @@ static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task, void* t
 	
 	if(tina_yield(task->_coro, (uintptr_t)task)){
 		// This task has completed. Return it to the pool.
-		_tina_enqueue(&tasks->_pool, task);
-		_tina_enqueue(&tasks->_coro, task->_coro);
+		tasks->_pool.arr[tasks->_pool.count++] = task;
+		tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
 		
 		// Did it have a group, and was it the last task being waited for?
 		tina_group* group = task->_group;
@@ -210,7 +214,7 @@ void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data){
 		tina_task* task = _tina_tasks_next_task(tasks);
 		if(task){
 			// Assign a coroutine to the task and run it.
-			task->_coro = _tina_dequeue(&tasks->_coro);
+			task->_coro = tasks->_coro.arr[--tasks->_coro.count];
 			_tina_tasks_execute_task(tasks, task, thread_data);
 		} else if(flush){
 			break;
@@ -227,14 +231,19 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	if(group) *group = (tina_group){._count = count + 1};
 	
 	_TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_ASSERT(tasks->_pool.count >= count, "Tina Task Error: Ran out of tasks.");
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
-		_TINA_ASSERT(copy.func, "Tina Task Error: Task enqueued without a function.");
 		copy._group = group;
 		
-		tina_task* task = _tina_dequeue(&tasks->_pool);
-		_tina_enqueue(&tasks->_task[copy.priority], task);
-		*task = copy;
+		// Pop a task from the pool.
+		tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
+		(*task) = copy;
+		
+		// Enqueue the task.
+		_tina_queue* queue = &tasks->_task[copy.priority];
+		queue->arr[queue->head++ & queue->mask] = task;
+		queue->count++;
 	}
 	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
 	_TINA_MUTEX_UNLOCK(tasks->_lock);
