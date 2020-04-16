@@ -235,6 +235,8 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
 		copy._group = group;
+		_TINA_ASSERT(copy.func, "Tina Tasks Error: Task must have a body function.");
+		_TINA_ASSERT(copy.priority < TINA_TASK_PRIORITIES, "Tina Tasks Error: Task priority is invalid.");
 		
 		// Pop a task from the pool.
 		tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
