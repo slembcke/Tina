@@ -1,15 +1,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "tina.h"
-
-#ifndef TINA_TASK_H
-#define TINA_TASK_H
+#ifndef TINA_TASKS_H
+#define TINA_TASKS_H
 
 // Default to two priorities. (Max of 256)
 // When processing, lower valued priorities are started before higher valued ones.
 // Each priority is stored in a separately allocated queue and requires a linear search to find the next task.
-#define TINA_TASK_PRIORITIES 2
+#define TINA_TASKS_PRIORITIES 2
 // Convenience priority enum.
 enum {TINA_PRIORITY_HI, TINA_PRIORITY_LO};
 
@@ -27,7 +25,7 @@ struct tina_task {
 	tina_task_func* func;
 	// Task context pointer.
 	void* data;
-	// Priority of the task. Must be less than TINA_TASK_PRIORITIES.
+	// Priority of the task. Must be less than TINA_TASKS_PRIORITIES.
 	uint8_t priority;
 	// Context pointer passed to the tina_tasks_run(). (readonly)
 	// Intended to be used like thread local storage, but without needing a global variable.
@@ -65,9 +63,10 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group);
 // Similar to pthread_join() as a convenience method. Enqueues some tasks and waits on them.
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task);
 
-#ifdef TINA_IMPLEMENTATION
+#ifdef TINA_TASKS_IMPLEMENTATION
 
 // Override these. Based on C11 primitives.
+#ifndef _TINA_MUTEX_T
 #define _TINA_MUTEX_T mtx_t
 #define _TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
 #define _TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
@@ -76,6 +75,7 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 #define _TINA_SIGNAL_INIT(_SIG_) cnd_init(&_SIG_)
 #define _TINA_SIGNAL_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
 #define _TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
+#endif
 
 // TODO This probably doesn't compile as C++.
 
@@ -98,7 +98,7 @@ struct tina_tasks {
 	
 	// Keep the tasks and coroutine pools in a stack so recently used items are fresh in the cache.
 	_tina_stack _coro, _pool;
-	_tina_queue _task[TINA_TASK_PRIORITIES];
+	_tina_queue _task[TINA_TASKS_PRIORITIES];
 };
 
 static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
@@ -122,7 +122,7 @@ size_t tina_tasks_size(size_t task_count, size_t coro_count, size_t stack_size){
 	// Size of task.
 	size_t size = sizeof(tina_tasks);
 	// Size of queues.
-	size += (coro_count + task_count + TINA_TASK_PRIORITIES*task_count)*sizeof(void*);
+	size += (coro_count + task_count + TINA_TASKS_PRIORITIES*task_count)*sizeof(void*);
 	// Size of coroutines.
 	size += coro_count*stack_size;
 	// Size of tasks.
@@ -140,7 +140,7 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	buffer += coro_count*sizeof(void*);
 	tasks->_pool = (_tina_stack){.arr = buffer};
 	buffer += task_count*sizeof(void*);
-	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
+	for(unsigned i = 0; i < TINA_TASKS_PRIORITIES; i++){
 		tasks->_task[i] = (_tina_queue){.arr = buffer, .mask = task_count - 1};
 		buffer += task_count*sizeof(void*);
 	}
@@ -178,7 +178,7 @@ void tina_tasks_pause(tina_tasks* tasks){
 
 static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks){
 	// Linear search of the task queues in priority order until a task is found.
-	for(unsigned i = 0; i < TINA_TASK_PRIORITIES; i++){
+	for(unsigned i = 0; i < TINA_TASKS_PRIORITIES; i++){
 		_tina_queue* queue = &tasks->_task[i];
 		if(queue->count > 0){
 			// Dequeue a task.
@@ -226,6 +226,16 @@ void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data){
 	_TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
+static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
+	// Pop a task from the pool.
+	tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
+	(*task) = copy;
+	
+	_tina_queue* queue = &tasks->_task[copy.priority];
+	queue->arr[queue->head++ & queue->mask] = task;
+	queue->count++;
+}
+
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
 	// count + 1 because tina_tasks_wait() also decrements the count.
 	if(group) *group = (tina_group){._count = count + 1};
@@ -235,17 +245,10 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	for(size_t i = 0; i < count; i++){
 		tina_task copy = list[i];
 		copy._group = group;
+		
 		_TINA_ASSERT(copy.func, "Tina Tasks Error: Task must have a body function.");
-		_TINA_ASSERT(copy.priority < TINA_TASK_PRIORITIES, "Tina Tasks Error: Task priority is invalid.");
-		
-		// Pop a task from the pool.
-		tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
-		(*task) = copy;
-		
-		// Enqueue the task.
-		_tina_queue* queue = &tasks->_task[copy.priority];
-		queue->arr[queue->head++ & queue->mask] = task;
-		queue->count++;
+		_TINA_ASSERT(copy.priority < TINA_TASKS_PRIORITIES, "Tina Tasks Error: Task priority is invalid.");
+		_tina_tasks_push_task(tasks, copy);
 	}
 	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
 	_TINA_MUTEX_UNLOCK(tasks->_lock);
@@ -269,5 +272,30 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 	tina_tasks_wait(tasks, task, &group);
 }
 
+typedef struct {
+	tina_tasks* tasks;
+	_TINA_SIGNAL_T wakeup;
+} _tina_wakeup_context;
+
+static void _tina_tasks_sleep_wakeup(tina_task* task){
+	_tina_wakeup_context* ctx = task->data;
+	_TINA_MUTEX_LOCK(ctx->tasks->_lock);
+	_TINA_SIGNAL_BROADCAST(ctx->wakeup);
+	_TINA_MUTEX_UNLOCK(ctx->tasks->_lock);	
+}
+
+void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group){
+	_tina_wakeup_context ctx = {.tasks = tasks};
+	_TINA_SIGNAL_INIT(ctx.wakeup);
+	
+	_TINA_MUTEX_LOCK(tasks->_lock);
+	_TINA_ASSERT(tasks->_pool.count >= 1, "Tina Task Error: Ran out of tasks.");
+	_tina_tasks_push_task(tasks, (tina_task){.func = _tina_tasks_sleep_wakeup, .data = &ctx});
+	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	
+	_TINA_SIGNAL_WAIT(ctx.wakeup, tasks->_lock);
+	_TINA_MUTEX_UNLOCK(tasks->_lock);
+}
+
 #endif // TINA_TASK_IMPLEMENTATION
-#endif // TINA_TASK_H
+#endif // TINA_TASKS_H

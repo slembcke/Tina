@@ -46,7 +46,9 @@ void tina_free(tina* coro);
 extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
 
+#ifndef _TINA_ASSERT
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
+#endif
 
 // Yield execution to a coroutine.
 static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
