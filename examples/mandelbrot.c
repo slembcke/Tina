@@ -11,15 +11,12 @@
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
 #include <tina.h>
 
+#define SOKOL_IMPL
+#define SOKOL_GLCORE33
+#include "sokol_app.h"
+#include "sokol_gfx.h"
+
 #define TINA_TASKS_IMPLEMENTATION
-// #define _TINA_MUTEX_T pthread_mutex_t
-// #define _TINA_MUTEX_INIT(_LOCK_) pthread_mutex_init(&_LOCK_, NULL)
-// #define _TINA_MUTEX_LOCK(_LOCK_) pthread_mutex_lock(&_LOCK_)
-// #define _TINA_MUTEX_UNLOCK(_LOCK_) pthread_mutex_unlock(&_LOCK_)
-// #define _TINA_SIGNAL_T pthread_cond_t
-// #define _TINA_SIGNAL_INIT(_SIG_) pthread_cond_init(&_SIG_, NULL)
-// #define _TINA_SIGNAL_WAIT(_SIG_, _LOCK_) pthread_cond_wait(&_SIG_, &_LOCK_);
-// #define _TINA_SIGNAL_BROADCAST(_SIG_) pthread_cond_broadcast(&_SIG_)
 #include "tina_tasks.h"
 
 // TODO destroy cond/mutex
@@ -37,8 +34,8 @@ static int worker_body(void* data){
 	return 0;
 }
 
-#define W (8*1024)
-#define H (W/2)
+#define W (1*1024)
+#define H (W)
 uint8_t PIXELS[W*H];
 
 typedef struct {
@@ -59,8 +56,8 @@ static void mandelbrot_render(tina_task* task){
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint64_t ssx = ((uint64_t)px << 32) + (uint32_t)(3242174889u*sample);
 				uint64_t ssy = ((uint64_t)py << 32) + (uint32_t)(2447445414u*sample);
-				double x0 = 3.5*((double)ssx/(double)((uint64_t)W << 32)) - 2.5;
-				double y0 = 2.0*((double)ssy/(double)((uint64_t)H << 32)) - 1.0;
+				double x0 = 4*((double)ssx/(double)((uint64_t)W << 32)) - 3;
+				double y0 = 4*((double)ssy/(double)((uint64_t)H << 32)) - 2;
 				double x = 0, y = 0;
 				
 				unsigned i = 0;
@@ -134,36 +131,87 @@ static void mandelbrot_task(tina_task* task){
 	tina_tasks_wait(wctx->tasks, task, &group, 0);
 }
 
-int main(void){
+static void app_display(void){
+	int w = sapp_width(), h = sapp_height();
+	sg_pass_action action = {
+		.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 0}},
+	};
+	sg_begin_default_pass(&action, w, h);
+	
+	sg_end_pass();
+	sg_commit();
+}
+
+static void app_event(const sapp_event *event){
+	switch(event->type){
+		case SAPP_EVENTTYPE_MOUSE_MOVE: {
+			// ChipmunkDemoMouse = MouseToSpace(event);
+		}; break;
+		
+		case SAPP_EVENTTYPE_MOUSE_UP:
+		case SAPP_EVENTTYPE_MOUSE_DOWN: {
+			// Click(event);
+		} break;
+		
+		default: break;
+	}
+}
+
+unsigned WORKER_COUNT = 8;
+worker_context WORKERS[MAX_WORKERS];
+tina_tasks* TASKS;
+
+static void app_init(void){
+	puts("Sokol-App init.");
+	
+	puts("Creating TASKS.");
 	size_t task_count = 1024, coroutine_count = 128, stack_size = 64*1024;
 	void* buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
-	tina_tasks* tasks = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
+	TASKS = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
 	
-	int worker_count = 8;
-	worker_context workers[MAX_WORKERS];
-	for(int i = 0; i < worker_count; i++){
-		worker_context* worker = workers + i;
-		(*worker) = (worker_context){.tasks = tasks};
+	puts("Creating WORKERS.");
+	for(int i = 0; i < WORKER_COUNT; i++){
+		worker_context* worker = WORKERS + i;
+		(*worker) = (worker_context){.tasks = TASKS};
 		thrd_create(&worker->thread, worker_body, worker);
 	}
 	
-	tina_group group; tina_group_init(&group);
-	tina_tasks_enqueue(tasks, (tina_task[]){
-		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
-		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
-	}, 2, &group);
-	tina_tasks_wait_sleep(tasks, &group, 0);
+	puts("Init Sokol-GFX.");
+	sg_desc desc = {0};
+	sg_setup(&desc);
+	assert(sg_isvalid());
 	
-	puts("Writing image.");
-	stbi_write_png("out.png", W, H, 1, PIXELS, W);
+	puts("Starting root task.");
+	tina_tasks_enqueue(TASKS, (tina_task[]){
+		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0, .xmax = W, .ymin = 0, .ymax = H}},
+	}, 0, NULL);
+}
+
+static void app_cleanup(void){
+	puts("Sokol-App cleanup.");
+	// tina_tasks_wait_sleep(TASKS, &group, 0);
 	
-	tina_tasks_pause(tasks);
-	for(int i = 0; i < worker_count; i++){
-		thrd_join(workers[i].thread, NULL);
-	}
-	tina_tasks_destroy(tasks);
-	free(tasks);
+	puts("WORKERS shutdown.");
+	tina_tasks_pause(TASKS);
+	for(int i = 0; i < WORKER_COUNT; i++) thrd_join(WORKERS[i].thread, NULL);
 	
-	puts("Exiting.");
-	return EXIT_SUCCESS;
+	puts ("Destroing TASKS");
+	tina_tasks_destroy(TASKS);
+	free(TASKS);
+	
+	puts("Sokol-GFX shutdown.");
+	// sg_shutdown();
+}
+
+sapp_desc sokol_main(int argc, char* argv[]) {
+	return (sapp_desc){
+		.init_cb = app_init,
+		.frame_cb = app_display,
+		.event_cb = app_event,
+		.cleanup_cb = app_cleanup,
+		.width = 1024,
+		.height = 1024,
+		.high_dpi = true,
+		.window_title = "Mandelbrot",
+	};
 }
