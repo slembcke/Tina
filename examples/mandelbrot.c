@@ -1,63 +1,56 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-
 #include <threads.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-
-#define TINA_IMPLEMENTATION
-#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
-#include <tina.h>
-
 #define SOKOL_IMPL
+#define SOKOL_GL_IMPL
 #define SOKOL_GLCORE33
 #include "sokol_app.h"
 #include "sokol_gfx.h"
+#include "sokol_gl.h"
+
+#define TINA_IMPLEMENTATION
+#include <tina.h>
 
 #define TINA_TASKS_IMPLEMENTATION
 #include "tina_tasks.h"
 
-// TODO destroy cond/mutex
-
-#define MAX_WORKERS 16
+tina_tasks* TASKS;
 
 typedef struct {
 	thrd_t thread;
-	tina_tasks* tasks;
 } worker_context;
+
+#define MAX_WORKERS 16
+static unsigned WORKER_COUNT = 8;
+worker_context WORKERS[MAX_WORKERS];
 
 static int worker_body(void* data){
 	worker_context* ctx = data;
-	tina_tasks_run(ctx->tasks, false, ctx);
+	tina_tasks_run(TASKS, false, ctx);
 	return 0;
 }
 
-#define W (1*1024)
-#define H (W)
-uint8_t PIXELS[W*H];
+#define TEXTURE_SIZE 256
 
 typedef struct {
 	unsigned xmin, xmax;
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
-static void mandelbrot_render(tina_task* task){
-	mandelbrot_window* win = task->data;
-	// printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
-	
+static void mandelbrot_render(uint8_t *pixels){
 	const unsigned maxi = 1024;
 	const unsigned sample_count = 4;
 	
-	for(unsigned py = win->ymin; py < win->ymax; py++){
-		for(unsigned px = win->xmin; px < win->xmax; px++){
+	for(size_t py = 0; py < TEXTURE_SIZE; py++){
+		for(size_t px = 0; px < TEXTURE_SIZE; px++){
 			double value = 0;
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint64_t ssx = ((uint64_t)px << 32) + (uint32_t)(3242174889u*sample);
 				uint64_t ssy = ((uint64_t)py << 32) + (uint32_t)(2447445414u*sample);
-				double x0 = 4*((double)ssx/(double)((uint64_t)W << 32)) - 3;
-				double y0 = 4*((double)ssy/(double)((uint64_t)H << 32)) - 2;
+				double x0 = 4*((double)ssx/(double)((uint64_t)TEXTURE_SIZE << 32)) - 3;
+				double y0 = 4*((double)ssy/(double)((uint64_t)TEXTURE_SIZE << 32)) - 2;
 				double x = 0, y = 0;
 				
 				unsigned i = 0;
@@ -70,80 +63,113 @@ static void mandelbrot_render(tina_task* task){
 				
 				value += (i < maxi ? exp(-1e-2*i) : 0);
 			}
-			PIXELS[px + W*py] = 255*value/sample_count;
+			
+			uint8_t intensity = 255*value/sample_count;
+			const int stride = 4*TEXTURE_SIZE;
+			pixels[4*px + py*stride + 0] = intensity;
+			pixels[4*px + py*stride + 1] = intensity;
+			pixels[4*px + py*stride + 2] = intensity;
+			pixels[4*px + py*stride + 3] = intensity;
 		}
 	}
 }
 
 #define TASK_GROUP_MAX 32
 
-typedef struct {
-	tina_tasks* tasks;
-	tina_task* task;
-	tina_group* group;
-} mandelbrot_task_context;
+// typedef struct {
+// 	tina_task* task;
+// 	tina_group* group;
+// } mandelbrot_task_context;
 
-static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window win){
-	// printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
+// static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window win){
+// 	// printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
 	
-	unsigned xmin = win.xmin, xmax = win.xmax;
-	unsigned ymin = win.ymin, ymax = win.ymax;
-	unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
-	mandelbrot_window sub_windows[] = {
-		{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
-		{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
-		{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
-		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
-	};
+// 	unsigned xmin = win.xmin, xmax = win.xmax;
+// 	unsigned ymin = win.ymin, ymax = win.ymax;
+// 	unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
+// 	mandelbrot_window sub_windows[] = {
+// 		{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
+// 		{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
+// 		{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
+// 		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
+// 	};
 	
-	if((xmax - xmin) <= 512 || (ymax - ymin) <= 512){
-		// TODO Implement thread local linear allocator?
-		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
-		memcpy(cursor, sub_windows, sizeof(sub_windows));
+// 	if((xmax - xmin) <= 512 || (ymax - ymin) <= 512){
+// 		// TODO Implement thread local linear allocator?
+// 		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
+// 		memcpy(cursor, sub_windows, sizeof(sub_windows));
 		
-		tina_tasks_enqueue(ctx->tasks, (tina_task[]){
-			{.func = mandelbrot_render, .data = cursor + 0},
-			{.func = mandelbrot_render, .data = cursor + 1},
-			{.func = mandelbrot_render, .data = cursor + 2},
-			{.func = mandelbrot_render, .data = cursor + 3},
-		}, 4, ctx->group);
-		tina_tasks_wait(ctx->tasks, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
-	} else {
-		mandelbrot_subdiv(ctx, sub_windows[0]);
-		mandelbrot_subdiv(ctx, sub_windows[1]);
-		mandelbrot_subdiv(ctx, sub_windows[2]);
-		mandelbrot_subdiv(ctx, sub_windows[3]);
-	}
-}
+// 		tina_tasks_enqueue(TASKS, (tina_task[]){
+// 			{.func = mandelbrot_render, .data = cursor + 0},
+// 			{.func = mandelbrot_render, .data = cursor + 1},
+// 			{.func = mandelbrot_render, .data = cursor + 2},
+// 			{.func = mandelbrot_render, .data = cursor + 3},
+// 		}, 4, ctx->group);
+// 		tina_tasks_wait(TASKS, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
+// 	} else {
+// 		mandelbrot_subdiv(ctx, sub_windows[0]);
+// 		mandelbrot_subdiv(ctx, sub_windows[1]);
+// 		mandelbrot_subdiv(ctx, sub_windows[2]);
+// 		mandelbrot_subdiv(ctx, sub_windows[3]);
+// 	}
+// }
 
-static void mandelbrot_task(tina_task* task){
-	mandelbrot_window* win = task->data;
-	worker_context* wctx = task->thread_data;
+// static void mandelbrot_task(tina_task* task){
+// 	mandelbrot_window* win = task->data;
+// 	worker_context* wctx = task->thread_data;
 	
-	tina_group group; tina_group_init(&group);
-	mandelbrot_subdiv(&(mandelbrot_task_context){
-		.tasks = wctx->tasks,
-		.task = task,
-		.group = &group,
-	}, *win);
+// 	tina_group group; tina_group_init(&group);
+// 	mandelbrot_subdiv(&(mandelbrot_task_context){
+// 		.task = task,
+// 		.group = &group,
+// 	}, *win);
 	
-	// Wait for remaining tasks to finish.
-	tina_tasks_wait(wctx->tasks, task, &group, 0);
-}
+// 	// Wait for remaining tasks to finish.
+// 	tina_tasks_wait(TASKS, task, &group, 0);
+// }
 
-static void app_display(void){
+sg_image texture;
+
+typedef struct {} display_task_ctx;
+
+static void display_task(tina_task* task){
+	display_task_ctx* ctx = task->data;
+	
+	_sapp_glx_make_current();
 	int w = sapp_width(), h = sapp_height();
 	sg_pass_action action = {
-		.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 0}},
+		.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 1}},
 	};
 	sg_begin_default_pass(&action, w, h);
 	
+	sgl_defaults();
+	sgl_enable_texture();
+	
+	sgl_texture(texture);
+	sgl_begin_triangle_strip();
+		sgl_v2f_t2f(-0.5, -0.5, 0, 0);
+		sgl_v2f_t2f( 0.5, -0.5, 1, 0);
+		sgl_v2f_t2f(-0.5,  0.5, 0, 1);
+		sgl_v2f_t2f( 0.5,  0.5, 1, 1);
+	sgl_end();
+	
+	sgl_draw();
 	sg_end_pass();
 	sg_commit();
 }
 
+static void app_display(void){
+	tina_group group; tina_group_init(&group);
+	tina_tasks_enqueue(TASKS, &(tina_task){.func = display_task, .data = NULL}, 1, &group);
+	tina_tasks_wait_sleep(TASKS, &group, 0);
+}
+
 static void app_event(const sapp_event *event){
 	switch(event->type){
+		case SAPP_EVENTTYPE_KEY_UP: {
+			if(event->key_code == SAPP_KEYCODE_ESCAPE) sapp_request_quit();
+		} break;
+		
 		case SAPP_EVENTTYPE_MOUSE_MOVE: {
 			// ChipmunkDemoMouse = MouseToSpace(event);
 		}; break;
@@ -157,10 +183,6 @@ static void app_event(const sapp_event *event){
 	}
 }
 
-unsigned WORKER_COUNT = 8;
-worker_context WORKERS[MAX_WORKERS];
-tina_tasks* TASKS;
-
 static void app_init(void){
 	puts("Sokol-App init.");
 	
@@ -172,18 +194,36 @@ static void app_init(void){
 	puts("Creating WORKERS.");
 	for(int i = 0; i < WORKER_COUNT; i++){
 		worker_context* worker = WORKERS + i;
-		(*worker) = (worker_context){.tasks = TASKS};
+		(*worker) = (worker_context){};
 		thrd_create(&worker->thread, worker_body, worker);
 	}
 	
 	puts("Init Sokol-GFX.");
-	sg_desc desc = {0};
-	sg_setup(&desc);
+	sg_desc gfx_desc = {};
+	sg_setup(&gfx_desc);
 	assert(sg_isvalid());
+	
+	puts("Init Sokol-GL.");
+	sgl_desc_t gl_desc = {};
+	sgl_setup(&gl_desc);
+	
+	uint8_t pixels[4*256*256];
+	mandelbrot_render(pixels);
+	
+	texture = sg_make_image(&(sg_image_desc){
+		.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
+		.pixel_format = SG_PIXELFORMAT_RGBA8,
+		.min_filter = SG_FILTER_NEAREST,
+		.mag_filter = SG_FILTER_NEAREST,
+		.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+		.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
+		.content.subimage[0][0] = {.ptr = pixels, .size = sizeof(pixels)},
+	});
+	
 	
 	puts("Starting root task.");
 	tina_tasks_enqueue(TASKS, (tina_task[]){
-		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0, .xmax = W, .ymin = 0, .ymax = H}},
+		// {.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0, .xmax = W, .ymin = 0, .ymax = H}},
 	}, 0, NULL);
 }
 

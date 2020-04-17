@@ -1,4 +1,4 @@
-CFLAGS =  -I.. -Wall -Werror -g -Os
+CFLAGS =  -I.. -Wall -Werror -Wno-unused-variable -Wno-unused-function -g -O0
 LDFLAGS = -pthread -lm -lGL -lX11 -ldl -g
 
 .phony: clean default run
