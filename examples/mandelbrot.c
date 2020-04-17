@@ -40,26 +40,14 @@ static int worker_body(void* data){
 #define H 2048
 uint8_t PIXELS[W*H];
 
-static void TaskEmpty(tina_task* task){
-	worker_context* ctx = task->data;
-	puts("empty");
-}
+typedef struct {
+	unsigned xmin, xmax;
+	unsigned ymin, ymax;
+} mandelbrot_task_context;
 
-int main(void){
-	size_t task_count = 1024, coroutine_count = 128, stack_size = 16*1024;
-	void* buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
-	tina_tasks* tasks = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
-	
-	int worker_count = 1;
-	worker_context workers[MAX_WORKERS];
-	for(int i = 0; i < worker_count; i++){
-		worker_context* worker = workers + i;
-		(*worker) = (worker_context){.tasks = tasks};
-		thrd_create(&worker->thread, worker_body, worker);
-	}
-	
-	for(unsigned py = 0; py < H; py++){
-		for(unsigned px = 0; px < W; px++){
+static void mandelbrot_render(mandelbrot_task_context* ctx){
+	for(unsigned py = ctx->ymin; py < ctx->ymax; py++){
+		for(unsigned px = ctx->xmin; px < ctx->xmax; px++){
 			double x0 = 3.5*((double)px/(double)W) - 2.5;
 			double y0 = 2.0*((double)py/(double)H) - 1.0;
 			double x = 0, y = 0;
@@ -76,15 +64,60 @@ int main(void){
 			PIXELS[px + W*py] = (i < maxi ? ~i : 0);
 		}
 	}
+}
+
+static void mandelbrot_task(tina_task* task){
+	mandelbrot_task_context* ctx = task->data;
+	worker_context* wctx = task->thread_data;
+	
+	unsigned w = ctx->xmax - ctx->xmin;
+	unsigned h = ctx->ymax - ctx->ymin;
+	if(w <= 256 || h <= 256){
+		mandelbrot_render(ctx);
+	} else {
+		unsigned xmin = ctx->xmin, xmax = ctx->xmax;
+		unsigned ymin = ctx->ymin, ymax = ctx->ymax;
+		unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
+		mandelbrot_task_context sub_contexts[] = {
+			{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
+			{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
+			{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
+			{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
+		};
+		
+		tina_tasks_join(wctx->tasks, (tina_task[]){
+			{.func = mandelbrot_task, .data = sub_contexts + 0},
+			{.func = mandelbrot_task, .data = sub_contexts + 1},
+			{.func = mandelbrot_task, .data = sub_contexts + 2},
+			{.func = mandelbrot_task, .data = sub_contexts + 3},
+		}, 4, task);
+		// printf("parent done (%d, %d, %d, %d)\n", ctx->xmin, ctx->xmax, ctx->ymin, ctx->ymax);
+	}
+}
+
+int main(void){
+	size_t task_count = 1024, coroutine_count = 128, stack_size = 64*1024;
+	void* buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
+	tina_tasks* tasks = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
+	
+	int worker_count = 8;
+	worker_context workers[MAX_WORKERS];
+	for(int i = 0; i < worker_count; i++){
+		worker_context* worker = workers + i;
+		(*worker) = (worker_context){.tasks = tasks};
+		thrd_create(&worker->thread, worker_body, worker);
+	}
+	
+	tina_group group;
+	tina_tasks_enqueue(tasks, (tina_task[]){
+		{.func = mandelbrot_task, .data = &(mandelbrot_task_context){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
+		{.func = mandelbrot_task, .data = &(mandelbrot_task_context){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
+	}, 2, &group);
+	tina_tasks_wait_sleep(tasks, &group);
 	
 	puts("Writing image.");
 	stbi_write_png("out.png", W, H, 1, PIXELS, W);
 	
-	tina_group group;
-	tina_tasks_enqueue(tasks, &(tina_task){.func = TaskEmpty}, 1, &group);
-	tina_tasks_wait_sleep(tasks, &group);
-	
-	puts("Shutting down workers.");
 	tina_tasks_pause(tasks);
 	for(int i = 0; i < worker_count; i++){
 		thrd_join(workers[i].thread, NULL);
