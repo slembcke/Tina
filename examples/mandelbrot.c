@@ -36,8 +36,8 @@ static int worker_body(void* data){
 	return 0;
 }
 
-#define W 4096
-#define H 2048
+#define W (16*1024)
+#define H (8*1024)
 uint8_t PIXELS[W*H];
 
 typedef struct {
@@ -47,7 +47,8 @@ typedef struct {
 
 static void mandelbrot_render(tina_task* task){
 	mandelbrot_window* win = task->data;
-	printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
+	// printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
+	
 	for(unsigned py = win->ymin; py < win->ymax; py++){
 		for(unsigned px = win->xmin; px < win->xmax; px++){
 			double x0 = 3.5*((double)px/(double)W) - 2.5;
@@ -74,13 +75,10 @@ typedef struct {
 	tina_tasks* tasks;
 	tina_task* task;
 	tina_group* group;
-	
-	mandelbrot_window windows[TASK_GROUP_MAX];
-	unsigned cursor;
 } mandelbrot_task_context;
 
 static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window win){
-	printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
+	// printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
 	
 	unsigned xmin = win.xmin, xmax = win.xmax;
 	unsigned ymin = win.ymin, ymax = win.ymax;
@@ -93,9 +91,9 @@ static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window wi
 	};
 	
 	if((xmax - xmin) <= 256 || (ymax - ymin) <= 256){
-		mandelbrot_window* cursor = ctx->windows + (ctx->cursor & (TASK_GROUP_MAX - 1));
+		// TODO Implement thread local linear allocator?
+		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
 		memcpy(cursor, sub_windows, sizeof(sub_windows));
-		ctx->cursor += 4;
 		
 		tina_tasks_enqueue(ctx->tasks, (tina_task[]){
 			{.func = mandelbrot_render, .data = cursor + 0},
@@ -103,8 +101,7 @@ static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window wi
 			{.func = mandelbrot_render, .data = cursor + 2},
 			{.func = mandelbrot_render, .data = cursor + 3},
 		}, 4, ctx->group);
-		// tina_tasks_governor(ctx->tasks, ctx->task, ctx->group, 12);
-		tina_tasks_wait(ctx->tasks, ctx->task, ctx->group);
+		tina_tasks_governor(ctx->tasks, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
 	} else {
 		mandelbrot_subdiv(ctx, sub_windows[0]);
 		mandelbrot_subdiv(ctx, sub_windows[1]);
@@ -117,12 +114,13 @@ static void mandelbrot_task(tina_task* task){
 	mandelbrot_window* win = task->data;
 	worker_context* wctx = task->thread_data;
 	
-	tina_group group = {};
+	tina_group group = {._count = 1};
 	mandelbrot_subdiv(&(mandelbrot_task_context){
 		.tasks = wctx->tasks,
 		.task = task,
 		.group = &group,
 	}, *win);
+	tina_tasks_wait(wctx->tasks, task, &group);
 }
 
 int main(void){
@@ -138,11 +136,11 @@ int main(void){
 		thrd_create(&worker->thread, worker_body, worker);
 	}
 	
-	tina_group group;
+	tina_group group = {._count = 1};
 	tina_tasks_enqueue(tasks, (tina_task[]){
 		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
 		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
-	}, 1, &group);
+	}, 2, &group);
 	tina_tasks_wait_sleep(tasks, &group);
 	
 	puts("Writing image.");
@@ -152,6 +150,8 @@ int main(void){
 	for(int i = 0; i < worker_count; i++){
 		thrd_join(workers[i].thread, NULL);
 	}
+	tina_tasks_destroy(tasks);
+	free(tasks);
 	
 	puts("Exiting.");
 	return EXIT_SUCCESS;

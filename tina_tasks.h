@@ -69,10 +69,12 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 #ifndef _TINA_MUTEX_T
 #define _TINA_MUTEX_T mtx_t
 #define _TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
+#define _TINA_MUTEX_DESTROY(_LOCK_) mtx_destroy(&_LOCK_)
 #define _TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
 #define _TINA_MUTEX_UNLOCK(_LOCK_) mtx_unlock(&_LOCK_)
 #define _TINA_SIGNAL_T cnd_t
 #define _TINA_SIGNAL_INIT(_SIG_) cnd_init(&_SIG_)
+#define _TINA_SIGNAL_DESTROY(_SIG_) cnd_destroy(&_SIG_)
 #define _TINA_SIGNAL_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
 #define _TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
@@ -169,11 +171,9 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	return tasks;
 }
 
-void tina_tasks_pause(tina_tasks* tasks){
-	_TINA_MUTEX_LOCK(tasks->_lock); {
-		tasks->_pause = true;
-		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
-	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+void tina_tasks_destroy(tina_tasks* tasks){
+	_TINA_MUTEX_DESTROY(tasks->_lock);
+	_TINA_SIGNAL_DESTROY(tasks->_wakeup);
 }
 
 static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks){
@@ -225,6 +225,13 @@ void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data){
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
+void tina_tasks_pause(tina_tasks* tasks){
+	_TINA_MUTEX_LOCK(tasks->_lock); {
+		tasks->_pause = true;
+		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+}
+
 static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
 	// Pop a task from the pool.
 	tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
@@ -236,10 +243,9 @@ static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
-	// count + 1 because tina_tasks_wait() also decrements the count.
-	if(group) *group = (tina_group){._count = count + 1};
-	
 	_TINA_MUTEX_LOCK(tasks->_lock); {
+		if(group) group->_count += count;
+		
 		_TINA_ASSERT(tasks->_pool.count >= count, "Tina Task Error: Ran out of tasks.");
 		for(size_t i = 0; i < count; i++){
 			tina_task copy = list[i];
@@ -254,7 +260,7 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 }
 
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group){
-	_TINA_ASSERT(group->_task == NULL, "Tina Task Error: Groups cannot be reused.");
+	// _TINA_ASSERT(group->_task == NULL, "Tina Task Error: Groups cannot be reused.");
 	
 	_TINA_MUTEX_LOCK(tasks->_lock); {
 		group->_task = task;
@@ -262,6 +268,21 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group){
 			// There are still tasks running. Yield false (task not complete) back to the tasks system.
 			tina_yield(group->_task->_coro, false);
 		}
+		
+		// Make the group ready to use again.
+		group->_count++;
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+}
+
+void tina_tasks_governor(tina_tasks* tasks, tina_task* task, tina_group* group, unsigned threshold){
+	_TINA_MUTEX_LOCK(tasks->_lock); {
+		group->_task = task;
+		if(--group->_count > threshold){
+			group->_count -= threshold;
+			tina_yield(group->_task->_coro, false);
+			group->_count += threshold;
+		}
+		group->_count++;
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
@@ -296,6 +317,8 @@ void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group){
 		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
 		_TINA_SIGNAL_WAIT(ctx.wakeup, tasks->_lock);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+	
+	_TINA_SIGNAL_DESTROY(ctx.wakeup);
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
