@@ -1,4 +1,4 @@
-CFLAGS =  -I.. -Wall -g -Os
+CFLAGS =  -I.. -Wall -Werror -g -Os
 LDFLAGS = -pthread -g
 
 .phony: clean default run

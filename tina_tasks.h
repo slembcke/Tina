@@ -41,6 +41,7 @@ struct tina_task {
 struct tina_group {
 	unsigned _count;
 	tina_task* _task;
+	uint32_t _magic;
 };
 
 // Get the allocation size for a tasks instance.
@@ -56,10 +57,13 @@ void tina_tasks_run(tina_tasks* tasks, bool flush, void* thread_data);
 // Pause execution of tasks on all threads as soon as their current tasks finish.
 void tina_tasks_pause(tina_tasks* tasks);
 
+// Groups must be initialized before use.
+void tina_group_init(tina_group* group);
+
 // Add tasks to the task system, optional pass the address of a tina_group to track when the tasks have completed.
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group);
 // Yield the current task until the group of tasks finish.
-void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group);
+void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsigned threshold);
 // Similar to pthread_join() as a convenience method. Enqueues some tasks and waits on them.
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task);
 
@@ -232,6 +236,11 @@ void tina_tasks_pause(tina_tasks* tasks){
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
+void tina_group_init(tina_group* group){
+	// Count is initailized to 1 because tina_tasks_wait() also decrements the count for symmetry reasons.
+	(*group) = (tina_group){._count = 1, ._magic = _TINA_MAGIC};
+}
+
 static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
 	// Pop a task from the pool.
 	tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
@@ -244,7 +253,10 @@ static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
 	_TINA_MUTEX_LOCK(tasks->_lock); {
-		if(group) group->_count += count;
+		if(group){
+			_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
+			group->_count += count;
+		}
 		
 		_TINA_ASSERT(tasks->_pool.count >= count, "Tina Task Error: Ran out of tasks.");
 		for(size_t i = 0; i < count; i++){
@@ -259,56 +271,49 @@ void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, 
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
-void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group){
-	// _TINA_ASSERT(group->_task == NULL, "Tina Task Error: Groups cannot be reused.");
-	
+void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsigned threshold){
 	_TINA_MUTEX_LOCK(tasks->_lock); {
+		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
 		group->_task = task;
-		if(--group->_count > 0){
-			// There are still tasks running. Yield false (task not complete) back to the tasks system.
+		
+		if(--group->_count > threshold){
+			group->_count -= threshold;
+			// Yield until the counter hits zero.
 			tina_yield(group->_task->_coro, false);
+			// Restore the counter for the remaining tasks.
+			group->_count += threshold;
 		}
 		
 		// Make the group ready to use again.
 		group->_count++;
-	} _TINA_MUTEX_UNLOCK(tasks->_lock);
-}
-
-void tina_tasks_governor(tina_tasks* tasks, tina_task* task, tina_group* group, unsigned threshold){
-	_TINA_MUTEX_LOCK(tasks->_lock); {
-		group->_task = task;
-		if(--group->_count > threshold){
-			group->_count -= threshold;
-			tina_yield(group->_task->_coro, false);
-			group->_count += threshold;
-		}
-		group->_count++;
+		group->_task = NULL;
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task){
-	tina_group group = {};
+	tina_group group; tina_group_init(&group);
 	tina_tasks_enqueue(tasks, list, count, &group);
-	tina_tasks_wait(tasks, task, &group);
+	tina_tasks_wait(tasks, task, &group, 0);
 }
 
 typedef struct {
 	tina_tasks* tasks;
 	tina_group* group;
+	unsigned threshold;
 	_TINA_SIGNAL_T wakeup;
 } _tina_wakeup_context;
 
 static void _tina_tasks_sleep_wakeup(tina_task* task){
 	_tina_wakeup_context* ctx = task->data;
-	tina_tasks_wait(ctx->tasks, task, ctx->group);
+	tina_tasks_wait(ctx->tasks, task, ctx->group, ctx->threshold);
 	
 	_TINA_MUTEX_LOCK(ctx->tasks->_lock); {
 		_TINA_SIGNAL_BROADCAST(ctx->wakeup);
 	} _TINA_MUTEX_UNLOCK(ctx->tasks->_lock);
 }
 
-void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group){
-	_tina_wakeup_context ctx = {.tasks = tasks, .group = group};
+void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group, unsigned threshold){
+	_tina_wakeup_context ctx = {.tasks = tasks, .group = group, .threshold = threshold};
 	_TINA_SIGNAL_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock); {

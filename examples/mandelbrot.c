@@ -36,8 +36,8 @@ static int worker_body(void* data){
 	return 0;
 }
 
-#define W (8*1024)
-#define H (4*1024)
+#define W (4*1024)
+#define H (2*1024)
 uint8_t PIXELS[W*H];
 
 typedef struct {
@@ -98,7 +98,7 @@ static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window wi
 		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
 	};
 	
-	if((xmax - xmin) <= 128 || (ymax - ymin) <= 128){
+	if((xmax - xmin) <= 512 || (ymax - ymin) <= 512){
 		// TODO Implement thread local linear allocator?
 		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
 		memcpy(cursor, sub_windows, sizeof(sub_windows));
@@ -109,7 +109,7 @@ static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window wi
 			{.func = mandelbrot_render, .data = cursor + 2},
 			{.func = mandelbrot_render, .data = cursor + 3},
 		}, 4, ctx->group);
-		tina_tasks_governor(ctx->tasks, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
+		tina_tasks_wait(ctx->tasks, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
 	} else {
 		mandelbrot_subdiv(ctx, sub_windows[0]);
 		mandelbrot_subdiv(ctx, sub_windows[1]);
@@ -122,13 +122,15 @@ static void mandelbrot_task(tina_task* task){
 	mandelbrot_window* win = task->data;
 	worker_context* wctx = task->thread_data;
 	
-	tina_group group = {._count = 1};
+	tina_group group; tina_group_init(&group);
 	mandelbrot_subdiv(&(mandelbrot_task_context){
 		.tasks = wctx->tasks,
 		.task = task,
 		.group = &group,
 	}, *win);
-	tina_tasks_wait(wctx->tasks, task, &group);
+	
+	// Wait for remaining tasks to finish.
+	tina_tasks_wait(wctx->tasks, task, &group, 0);
 }
 
 int main(void){
@@ -144,12 +146,12 @@ int main(void){
 		thrd_create(&worker->thread, worker_body, worker);
 	}
 	
-	tina_group group = {._count = 1};
+	tina_group group; tina_group_init(&group);
 	tina_tasks_enqueue(tasks, (tina_task[]){
 		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
 		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
 	}, 2, &group);
-	tina_tasks_wait_sleep(tasks, &group);
+	tina_tasks_wait_sleep(tasks, &group, 0);
 	
 	puts("Writing image.");
 	stbi_write_png("out.png", W, H, 1, PIXELS, W);

@@ -50,9 +50,12 @@ extern const uint64_t _tina_init_stack[];
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
 #endif
 
+// Magic number to help assert for memory corruption errors.
+#define _TINA_MAGIC 0x54494E41u
+
 // Yield execution to a coroutine.
 static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
-	_TINA_ASSERT(coro->_magic == 0x54494E41u, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
+	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
 	
 	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
 	swap_func* swap = ((swap_func*)(void*)_tina_swap);
@@ -65,7 +68,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->running = true;
-	coro->_magic = 0x54494E41u;
+	coro->_magic = _TINA_MAGIC;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
 	init_func* init = ((init_func*)(void*)_tina_init_stack);
