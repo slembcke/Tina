@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 #include <threads.h>
 
@@ -36,8 +37,8 @@ static int worker_body(void* data){
 	return 0;
 }
 
-#define W (4*1024)
-#define H (2*1024)
+#define W (8*1024)
+#define H (W/2)
 uint8_t PIXELS[W*H];
 
 typedef struct {
@@ -50,11 +51,11 @@ static void mandelbrot_render(tina_task* task){
 	// printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
 	
 	const unsigned maxi = 1024;
-	const unsigned sample_count = 8;
+	const unsigned sample_count = 4;
 	
 	for(unsigned py = win->ymin; py < win->ymax; py++){
 		for(unsigned px = win->xmin; px < win->xmax; px++){
-			unsigned isum = 0;
+			double value = 0;
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint64_t ssx = ((uint64_t)px << 32) + (uint32_t)(3242174889u*sample);
 				uint64_t ssy = ((uint64_t)py << 32) + (uint32_t)(2447445414u*sample);
@@ -70,9 +71,9 @@ static void mandelbrot_render(tina_task* task){
 					i++;
 				}
 				
-				isum += i & 0xFF;
+				value += (i < maxi ? exp(-1e-2*i) : 0);
 			}
-			PIXELS[px + W*py] = isum/sample_count;
+			PIXELS[px + W*py] = 255*value/sample_count;
 		}
 	}
 }
