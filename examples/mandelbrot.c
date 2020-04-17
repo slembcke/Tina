@@ -43,11 +43,13 @@ uint8_t PIXELS[W*H];
 typedef struct {
 	unsigned xmin, xmax;
 	unsigned ymin, ymax;
-} mandelbrot_task_context;
+} mandelbrot_window;
 
-static void mandelbrot_render(mandelbrot_task_context* ctx){
-	for(unsigned py = ctx->ymin; py < ctx->ymax; py++){
-		for(unsigned px = ctx->xmin; px < ctx->xmax; px++){
+static void mandelbrot_render(tina_task* task){
+	mandelbrot_window* win = task->data;
+	printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
+	for(unsigned py = win->ymin; py < win->ymax; py++){
+		for(unsigned px = win->xmin; px < win->xmax; px++){
 			double x0 = 3.5*((double)px/(double)W) - 2.5;
 			double y0 = 2.0*((double)py/(double)H) - 1.0;
 			double x = 0, y = 0;
@@ -66,33 +68,61 @@ static void mandelbrot_render(mandelbrot_task_context* ctx){
 	}
 }
 
+#define TASK_GROUP_MAX 32
+
+typedef struct {
+	tina_tasks* tasks;
+	tina_task* task;
+	tina_group* group;
+	
+	mandelbrot_window windows[TASK_GROUP_MAX];
+	unsigned cursor;
+} mandelbrot_task_context;
+
+static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window win){
+	printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
+	
+	unsigned xmin = win.xmin, xmax = win.xmax;
+	unsigned ymin = win.ymin, ymax = win.ymax;
+	unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
+	mandelbrot_window sub_windows[] = {
+		{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
+		{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
+		{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
+		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
+	};
+	
+	if((xmax - xmin) <= 256 || (ymax - ymin) <= 256){
+		mandelbrot_window* cursor = ctx->windows + (ctx->cursor & (TASK_GROUP_MAX - 1));
+		memcpy(cursor, sub_windows, sizeof(sub_windows));
+		ctx->cursor += 4;
+		
+		tina_tasks_enqueue(ctx->tasks, (tina_task[]){
+			{.func = mandelbrot_render, .data = cursor + 0},
+			{.func = mandelbrot_render, .data = cursor + 1},
+			{.func = mandelbrot_render, .data = cursor + 2},
+			{.func = mandelbrot_render, .data = cursor + 3},
+		}, 4, ctx->group);
+		// tina_tasks_governor(ctx->tasks, ctx->task, ctx->group, 12);
+		tina_tasks_wait(ctx->tasks, ctx->task, ctx->group);
+	} else {
+		mandelbrot_subdiv(ctx, sub_windows[0]);
+		mandelbrot_subdiv(ctx, sub_windows[1]);
+		mandelbrot_subdiv(ctx, sub_windows[2]);
+		mandelbrot_subdiv(ctx, sub_windows[3]);
+	}
+}
+
 static void mandelbrot_task(tina_task* task){
-	mandelbrot_task_context* ctx = task->data;
+	mandelbrot_window* win = task->data;
 	worker_context* wctx = task->thread_data;
 	
-	unsigned w = ctx->xmax - ctx->xmin;
-	unsigned h = ctx->ymax - ctx->ymin;
-	if(w <= 256 || h <= 256){
-		mandelbrot_render(ctx);
-	} else {
-		unsigned xmin = ctx->xmin, xmax = ctx->xmax;
-		unsigned ymin = ctx->ymin, ymax = ctx->ymax;
-		unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
-		mandelbrot_task_context sub_contexts[] = {
-			{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
-			{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
-			{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
-			{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
-		};
-		
-		tina_tasks_join(wctx->tasks, (tina_task[]){
-			{.func = mandelbrot_task, .data = sub_contexts + 0},
-			{.func = mandelbrot_task, .data = sub_contexts + 1},
-			{.func = mandelbrot_task, .data = sub_contexts + 2},
-			{.func = mandelbrot_task, .data = sub_contexts + 3},
-		}, 4, task);
-		// printf("parent done (%d, %d, %d, %d)\n", ctx->xmin, ctx->xmax, ctx->ymin, ctx->ymax);
-	}
+	tina_group group = {};
+	mandelbrot_subdiv(&(mandelbrot_task_context){
+		.tasks = wctx->tasks,
+		.task = task,
+		.group = &group,
+	}, *win);
 }
 
 int main(void){
@@ -110,9 +140,9 @@ int main(void){
 	
 	tina_group group;
 	tina_tasks_enqueue(tasks, (tina_task[]){
-		{.func = mandelbrot_task, .data = &(mandelbrot_task_context){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
-		{.func = mandelbrot_task, .data = &(mandelbrot_task_context){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
-	}, 2, &group);
+		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0*W/2, .xmax = 1*W/2, .ymin = 0, .ymax = H}},
+		{.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 1*W/2, .xmax = 2*W/2, .ymin = 0, .ymax = H}},
+	}, 1, &group);
 	tina_tasks_wait_sleep(tasks, &group);
 	
 	puts("Writing image.");
