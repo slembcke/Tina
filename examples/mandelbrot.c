@@ -36,8 +36,8 @@ static int worker_body(void* data){
 	return 0;
 }
 
-#define W (16*1024)
-#define H (8*1024)
+#define W (8*1024)
+#define H (4*1024)
 uint8_t PIXELS[W*H];
 
 typedef struct {
@@ -49,22 +49,30 @@ static void mandelbrot_render(tina_task* task){
 	mandelbrot_window* win = task->data;
 	// printf("render (%d, %d, %d, %d)\n", win->xmin, win->xmax, win->ymin, win->ymax);
 	
+	const unsigned maxi = 1024;
+	const unsigned sample_count = 8;
+	
 	for(unsigned py = win->ymin; py < win->ymax; py++){
 		for(unsigned px = win->xmin; px < win->xmax; px++){
-			double x0 = 3.5*((double)px/(double)W) - 2.5;
-			double y0 = 2.0*((double)py/(double)H) - 1.0;
-			double x = 0, y = 0;
-			
-			const int maxi = 1024;
-			unsigned i = 0;
-			while(x*x + y*y <= 4 && i < maxi){
-				double tmp = x*x - y*y + x0;
-				y = 2*x*y + y0;
-				x = tmp;
-				i++;
+			unsigned isum = 0;
+			for(unsigned sample = 0; sample < sample_count; sample++){
+				uint64_t ssx = ((uint64_t)px << 32) + (uint32_t)(3242174889u*sample);
+				uint64_t ssy = ((uint64_t)py << 32) + (uint32_t)(2447445414u*sample);
+				double x0 = 3.5*((double)ssx/(double)((uint64_t)W << 32)) - 2.5;
+				double y0 = 2.0*((double)ssy/(double)((uint64_t)H << 32)) - 1.0;
+				double x = 0, y = 0;
+				
+				unsigned i = 0;
+				while(x*x + y*y <= 4 && i < maxi){
+					double tmp = x*x - y*y + x0;
+					y = 2*x*y + y0;
+					x = tmp;
+					i++;
+				}
+				
+				isum += i & 0xFF;
 			}
-			
-			PIXELS[px + W*py] = (i < maxi ? ~i : 0);
+			PIXELS[px + W*py] = isum/sample_count;
 		}
 	}
 }
@@ -90,7 +98,7 @@ static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window wi
 		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
 	};
 	
-	if((xmax - xmin) <= 256 || (ymax - ymin) <= 256){
+	if((xmax - xmin) <= 128 || (ymax - ymin) <= 128){
 		// TODO Implement thread local linear allocator?
 		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
 		memcpy(cursor, sub_windows, sizeof(sub_windows));
