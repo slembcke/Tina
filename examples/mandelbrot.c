@@ -23,7 +23,7 @@ typedef struct {
 } worker_context;
 
 #define MAX_WORKERS 16
-static unsigned WORKER_COUNT = 8;
+static unsigned WORKER_COUNT = 16;
 worker_context WORKERS[MAX_WORKERS];
 
 static int worker_body(void* data){
@@ -92,7 +92,7 @@ typedef struct {
 
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 	const unsigned maxi = 1024;
-	const unsigned sample_count = 4;
+	const unsigned sample_count = 1;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
 		for(size_t px = 0; px < TEXTURE_SIZE; px++){
@@ -135,11 +135,28 @@ unsigned TEXTURE_CURSOR;
 typedef struct tile_node tile_node;
 struct tile_node {
 	sg_image texture;
+	
+	bool requested;
+	void* pixels;
+	
 	uint64_t timestamp;
 	tile_node* children;
 };
 
 static tile_node TREE_ROOT;
+
+typedef struct {
+	void* pixels;
+	DriftAffine matrix;
+	tile_node* node;
+} generate_tile_ctx;
+
+static void generate_tile_task(tina_task* task){
+	generate_tile_ctx *ctx = task->data;
+	mandelbrot_render(ctx->pixels, ctx->matrix);
+	ctx->node->pixels = ctx->pixels;
+	free(ctx);
+}
 
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
 static DriftAffine view_matrix = {0.5, 0, 0, 0.5, 0.5, 0};
@@ -188,7 +205,7 @@ static void visit_tile(tile_node* node, DriftAffine matrix){
 		// TODO rearrange?
 		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
 		double scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
-		if(scale > TEXTURE_SIZE){
+		if(scale > 1.5*TEXTURE_SIZE){
 			if(node->children){
 				visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
 				visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
@@ -201,14 +218,23 @@ static void visit_tile(tile_node* node, DriftAffine matrix){
 		} else {
 			draw_tile(mvp_matrix, node->texture);
 		}
-	} else {
-		printf("generate %d\n", TEXTURE_CURSOR);
-		uint8_t* pixels = malloc(4*256*256);
-		mandelbrot_render(pixels, matrix);
+	} else if(!node->requested){
+		node->requested = true;
 		
+		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
+		(*generate_ctx) = (generate_tile_ctx){
+			.pixels = malloc(4*256*256),
+			.matrix = matrix,
+			.node = node,
+		};
+		
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, NULL);
+	} else if(node->pixels){
+		printf("loaded %d\n", TEXTURE_CURSOR);
+		node->requested = false;
 		node->texture = TEXTURE_CACHE[TEXTURE_CURSOR++ & (TEXTURE_CACHE_SIZE - 1)];
-		sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
-		free(pixels);
+		sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = node->pixels}});
+		free(node->pixels);
 	}
 }
 
@@ -341,8 +367,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
 		.frame_cb = app_display,
 		.event_cb = app_event,
 		.cleanup_cb = app_cleanup,
-		.width = 256,
-		.height = 256,
+		.width = 2000,
+		.height = 2000,
 		.window_title = "Mandelbrot",
 	};
 }
