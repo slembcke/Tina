@@ -33,14 +33,15 @@ static int worker_body(void* data){
 }
 
 #define TEXTURE_SIZE 256
+#define TEXTURE_CACHE_SIZE 1024
 
-typedef struct {float x, y;} DriftVec2;
-typedef struct {float a, b, c, d, x, y;} DriftAffine;
+typedef struct {double x, y;} DriftVec2;
+typedef struct {double a, b, c, d, x, y;} DriftAffine;
 
 static const DriftAffine DRIFT_AFFINE_ZERO = {0, 0, 0, 0, 0, 0};
 static const DriftAffine DRIFT_AFFINE_IDENTITY = {1, 0, 0, 1, 0, 0};
 
-static inline DriftAffine DriftAffineMakeTranspose(float a, float c, float x, float b, float d, float y){
+static inline DriftAffine DriftAffineMakeTranspose(double a, double c, double x, double b, double d, double y){
 	return (DriftAffine){a, b, c, d, x, y};
 }
 
@@ -52,18 +53,18 @@ static inline DriftAffine DriftAffineMult(DriftAffine m1, DriftAffine m2){
 }
 
 static inline DriftAffine DriftAffineInverse(DriftAffine m){
-  float inv_det = 1/(m.a*m.d - m.c*m.b);
+  double inv_det = 1/(m.a*m.d - m.c*m.b);
   return DriftAffineMakeTranspose(
      m.d*inv_det, -m.c*inv_det, (m.c*m.y - m.d*m.x)*inv_det,
     -m.b*inv_det,  m.a*inv_det, (m.b*m.x - m.a*m.y)*inv_det
   );
 }
 
-static inline DriftAffine DriftAffineOrtho(const float l, const float r, const float b, const float t){
-	float sx = 2/(r - l);
-	float sy = 2/(t - b);
-	float tx = -(r + l)/(r - l);
-	float ty = -(t + b)/(t - b);
+static inline DriftAffine DriftAffineOrtho(const double l, const double r, const double b, const double t){
+	double sx = 2/(r - l);
+	double sy = 2/(t - b);
+	double tx = -(r + l)/(r - l);
+	double ty = -(t + b)/(t - b);
 	return DriftAffineMakeTranspose(
 		sx,  0, tx,
 		 0, sy, ty
@@ -89,7 +90,7 @@ typedef struct {
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
-static void mandelbrot_render(uint8_t *pixels){
+static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 	const unsigned maxi = 1024;
 	const unsigned sample_count = 4;
 	
@@ -99,15 +100,17 @@ static void mandelbrot_render(uint8_t *pixels){
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint32_t ssx = ((uint32_t)px << 16) + (uint16_t)(49472*sample);
 				uint32_t ssy = ((uint32_t)py << 16) + (uint16_t)(37345*sample);
-				double x0 = 4*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 3;
-				double y0 = 4*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 2;
-				double x = 0, y = 0;
+				DriftVec2 z = {0, 0};
+				DriftVec2 c = DriftAffinePoint(matrix, (DriftVec2){
+					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+				});
 				
 				unsigned i = 0;
-				while(x*x + y*y <= 4 && i < maxi){
-					double tmp = x*x - y*y + x0;
-					y = 2*x*y + y0;
-					x = tmp;
+				while(z.x*z.x + z.y*z.y <= 4 && i < maxi){
+					double tmp = z.x*z.x - z.y*z.y + c.x;
+					z.y = 2*z.x*z.y + c.y;
+					z.x = tmp;
 					i++;
 				}
 				
@@ -126,71 +129,20 @@ static void mandelbrot_render(uint8_t *pixels){
 
 #define TASK_GROUP_MAX 32
 
-// typedef struct {
-// 	tina_task* task;
-// 	tina_group* group;
-// } mandelbrot_task_context;
-
-// static void mandelbrot_subdiv(mandelbrot_task_context* ctx, mandelbrot_window win){
-// 	// printf("subdiv (%d, %d, %d, %d)\n", win.xmin, win.xmax, win.ymin, win.ymax);
-	
-// 	unsigned xmin = win.xmin, xmax = win.xmax;
-// 	unsigned ymin = win.ymin, ymax = win.ymax;
-// 	unsigned xmid = (xmin + xmax)/2, ymid = (ymin + ymax)/2;
-// 	mandelbrot_window sub_windows[] = {
-// 		{.xmin = xmin, .xmax = xmid, .ymin = ymin, .ymax = ymid},
-// 		{.xmin = xmid, .xmax = xmax, .ymin = ymin, .ymax = ymid},
-// 		{.xmin = xmin, .xmax = xmid, .ymin = ymid, .ymax = ymax},
-// 		{.xmin = xmid, .xmax = xmax, .ymin = ymid, .ymax = ymax},
-// 	};
-	
-// 	if((xmax - xmin) <= 512 || (ymax - ymin) <= 512){
-// 		// TODO Implement thread local linear allocator?
-// 		mandelbrot_window* cursor = malloc(sizeof(sub_windows));
-// 		memcpy(cursor, sub_windows, sizeof(sub_windows));
-		
-// 		tina_tasks_enqueue(TASKS, (tina_task[]){
-// 			{.func = mandelbrot_render, .data = cursor + 0},
-// 			{.func = mandelbrot_render, .data = cursor + 1},
-// 			{.func = mandelbrot_render, .data = cursor + 2},
-// 			{.func = mandelbrot_render, .data = cursor + 3},
-// 		}, 4, ctx->group);
-// 		tina_tasks_wait(TASKS, ctx->task, ctx->group, TASK_GROUP_MAX - 4);
-// 	} else {
-// 		mandelbrot_subdiv(ctx, sub_windows[0]);
-// 		mandelbrot_subdiv(ctx, sub_windows[1]);
-// 		mandelbrot_subdiv(ctx, sub_windows[2]);
-// 		mandelbrot_subdiv(ctx, sub_windows[3]);
-// 	}
-// }
-
-// static void mandelbrot_task(tina_task* task){
-// 	mandelbrot_window* win = task->data;
-// 	worker_context* wctx = task->thread_data;
-	
-// 	tina_group group; tina_group_init(&group);
-// 	mandelbrot_subdiv(&(mandelbrot_task_context){
-// 		.task = task,
-// 		.group = &group,
-// 	}, *win);
-	
-// 	// Wait for remaining tasks to finish.
-// 	tina_tasks_wait(TASKS, task, &group, 0);
-// }
-
+sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
+unsigned TEXTURE_CURSOR;
 
 typedef struct tile_node tile_node;
 struct tile_node {
-	DriftAffine matrix;
 	sg_image texture;
-	
-	tile_node* quadrants[4];
+	uint64_t timestamp;
+	tile_node* children;
 };
 
-static tile_node* TREE_ROOT;
+static tile_node TREE_ROOT;
 
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
-static DriftAffine view_matrix = {1, 0, 0, 1, 0, 0};
+static DriftAffine view_matrix = {0.5, 0, 0, 0.5, 0.5, 0};
 
 static DriftAffine pixel_to_world_matrix(void){
 	DriftAffine pixel_to_clip = DriftAffineOrtho(0, sapp_width(), sapp_height(), 0);
@@ -201,51 +153,63 @@ static DriftAffine pixel_to_world_matrix(void){
 typedef struct {} display_task_ctx;
 static DriftVec2 mouse_pos;
 
+static DriftAffine sub_matrix(DriftAffine m, double x, double y){
+	return (DriftAffine){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
+}
 
-static tile_node* visit_tiles(tile_node* node){
-	if(node){
-		// TODO rearrange?
-		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), node->matrix);
-		double scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
-		// if(scale < TEXTURE_SIZE){
-			sgl_matrix_mode_modelview();
-			DriftAffine mv_matrix = DriftAffineMult(view_matrix, node->matrix);
-			sgl_load_matrix(DriftAffineToGPU(mv_matrix).m);
-			
-			sgl_texture(node->texture);
-			sgl_begin_triangle_strip();
-				sgl_v2f_t2f(-1, -1, 0, 0);
-				sgl_v2f_t2f( 1, -1, 1, 0);
-				sgl_v2f_t2f(-1,  1, 0, 1);
-				sgl_v2f_t2f( 1,  1, 1, 1);
-			sgl_end();
-		// } else {
-		// 	node->quadrants[0] = visit_tiles(node->quadrants[0]);
-		// }
-	} else {
-		puts("render");
-		uint8_t* pixels = malloc(4*256*256);
-		mandelbrot_render(pixels);
-		
-		sg_image texture = sg_make_image(&(sg_image_desc){
-			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
-			.pixel_format = SG_PIXELFORMAT_RGBA8,
-			.min_filter = SG_FILTER_LINEAR,
-			.mag_filter = SG_FILTER_LINEAR,
-			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
-			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
-			.content.subimage[0][0] = {.ptr = pixels, .size = sizeof(pixels)},
-		});
-		free(pixels);
-		
-		node = malloc(sizeof(*node));
-		(*node) = (tile_node){
-			.matrix = DRIFT_AFFINE_IDENTITY,
-			.texture = texture,
-		};
-	}
+static bool frustum_cull(const DriftAffine mvp){
+	// Clip space center and extents.
+	DriftVec2 c = {mvp.x, mvp.y};
+	double ex = fabs(mvp.a) + fabs(mvp.c);
+	double ey = fabs(mvp.b) + fabs(mvp.d);
 	
-	return node;
+	return ((fabs(c.x) - ex < 1) && (fabs(c.y) - ey < 1));
+}
+
+static void draw_tile(DriftAffine mv_matrix, sg_image texture){
+	sgl_matrix_mode_modelview();
+	sgl_load_matrix(DriftAffineToGPU(mv_matrix).m);
+	
+	sgl_texture(texture);
+	sgl_begin_triangle_strip();
+		sgl_v2f_t2f(-1, -1, 0, 0);
+		sgl_v2f_t2f( 1, -1, 1, 0);
+		sgl_v2f_t2f(-1,  1, 0, 1);
+		sgl_v2f_t2f( 1,  1, 1, 1);
+	sgl_end();
+}
+
+static void visit_tile(tile_node* node, DriftAffine matrix){
+	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
+	DriftAffine mvp_matrix = DriftAffineMult(proj_matrix, mv_matrix);
+	if(!frustum_cull(mvp_matrix)) return;
+	
+	if(node->texture.id){
+		// TODO rearrange?
+		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
+		double scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+		if(scale > TEXTURE_SIZE){
+			if(node->children){
+				visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
+				visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
+				visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
+				visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
+			} else {
+				node->children = calloc(4, sizeof(*node->children));
+				draw_tile(mvp_matrix, node->texture);
+			}
+		} else {
+			draw_tile(mvp_matrix, node->texture);
+		}
+	} else {
+		printf("generate %d\n", TEXTURE_CURSOR);
+		uint8_t* pixels = malloc(4*256*256);
+		mandelbrot_render(pixels, matrix);
+		
+		node->texture = TEXTURE_CACHE[TEXTURE_CURSOR++ & (TEXTURE_CACHE_SIZE - 1)];
+		sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
+		free(pixels);
+	}
 }
 
 static void display_task(tina_task* task){
@@ -253,7 +217,7 @@ static void display_task(tina_task* task){
 	
 	_sapp_glx_make_current();
 	int w = sapp_width(), h = sapp_height();
-	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 1, 1}}};
+	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 1}}};
 	sg_begin_default_pass(&action, w, h);
 	
 	sgl_defaults();
@@ -262,7 +226,7 @@ static void display_task(tina_task* task){
 	sgl_matrix_mode_projection();
 	sgl_load_matrix(DriftAffineToGPU(proj_matrix).m);
 	
-	TREE_ROOT = visit_tiles(TREE_ROOT);
+	visit_tile(&TREE_ROOT, (DriftAffine){2, 0, 0, 2, -1, 0});
 	
 	sgl_draw();
 	sg_end_pass();
@@ -303,7 +267,7 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			float scale = exp(0.1*event->scroll_y);
+			double scale = exp(0.1*event->scroll_y);
 			DriftVec2 mpos = DriftAffinePoint(pixel_to_world_matrix(), mouse_pos);
 			DriftAffine t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = DriftAffineMult(view_matrix, t);
@@ -329,9 +293,21 @@ static void app_init(void){
 	}
 	
 	puts("Init Sokol-GFX.");
-	sg_desc gfx_desc = {};
+	sg_desc gfx_desc = {.image_pool_size = TEXTURE_CACHE_SIZE + 1};
 	sg_setup(&gfx_desc);
 	assert(sg_isvalid());
+	
+	for(unsigned i = 0; i < 1024; i++){
+		TEXTURE_CACHE[i] = sg_make_image(&(sg_image_desc){
+			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
+			.pixel_format = SG_PIXELFORMAT_RGBA8,
+			.min_filter = SG_FILTER_LINEAR,
+			.mag_filter = SG_FILTER_LINEAR,
+			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
+			.usage = SG_USAGE_DYNAMIC,
+		});
+	}
 	
 	puts("Init Sokol-GL.");
 	sgl_desc_t gl_desc = {};
@@ -365,8 +341,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
 		.frame_cb = app_display,
 		.event_cb = app_event,
 		.cleanup_cb = app_cleanup,
-		.width = 1024,
-		.height = 1024,
+		.width = 256,
+		.height = 256,
 		.window_title = "Mandelbrot",
 	};
 }
