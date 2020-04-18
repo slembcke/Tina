@@ -74,6 +74,10 @@ static inline DriftVec2 DriftAffinePoint(DriftAffine t, DriftVec2 p){
 	return (DriftVec2){t.a*p.x + t.c*p.y + t.x, t.b*p.x + t.d*p.y + t.y};
 }
 
+static inline DriftVec2 DriftAffineVec(DriftAffine t, DriftVec2 p){
+	return (DriftVec2){t.a*p.x + t.c*p.y, t.b*p.x + t.d*p.y};
+}
+
 typedef struct {float m[16];} DriftGPUMatrix;
 
 static inline DriftGPUMatrix DriftAffineToGPU(DriftAffine m){
@@ -174,17 +178,75 @@ static void mandelbrot_render(uint8_t *pixels){
 // 	tina_tasks_wait(TASKS, task, &group, 0);
 // }
 
-typedef struct {
-	// bounds
-	sg_image texture;
-} tree_node;
 
-static tree_node* TREE_ROOT;
+typedef struct tile_node tile_node;
+struct tile_node {
+	DriftAffine matrix;
+	sg_image texture;
+	
+	tile_node* quadrants[4];
+};
+
+static tile_node* TREE_ROOT;
 
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
 static DriftAffine view_matrix = {1, 0, 0, 1, 0, 0};
 
+static DriftAffine pixel_to_world_matrix(void){
+	DriftAffine pixel_to_clip = DriftAffineOrtho(0, sapp_width(), sapp_height(), 0);
+	DriftAffine vp_inv_matrix = DriftAffineInverse(DriftAffineMult(proj_matrix, view_matrix));
+	return DriftAffineMult(vp_inv_matrix, pixel_to_clip);
+}
+
 typedef struct {} display_task_ctx;
+static DriftVec2 mouse_pos;
+
+
+static tile_node* visit_tiles(tile_node* node){
+	if(node){
+		// TODO rearrange?
+		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), node->matrix);
+		double scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+		// if(scale < TEXTURE_SIZE){
+			sgl_matrix_mode_modelview();
+			DriftAffine mv_matrix = DriftAffineMult(view_matrix, node->matrix);
+			sgl_load_matrix(DriftAffineToGPU(mv_matrix).m);
+			
+			sgl_texture(node->texture);
+			sgl_begin_triangle_strip();
+				sgl_v2f_t2f(-1, -1, 0, 0);
+				sgl_v2f_t2f( 1, -1, 1, 0);
+				sgl_v2f_t2f(-1,  1, 0, 1);
+				sgl_v2f_t2f( 1,  1, 1, 1);
+			sgl_end();
+		// } else {
+		// 	node->quadrants[0] = visit_tiles(node->quadrants[0]);
+		// }
+	} else {
+		puts("render");
+		uint8_t* pixels = malloc(4*256*256);
+		mandelbrot_render(pixels);
+		
+		sg_image texture = sg_make_image(&(sg_image_desc){
+			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
+			.pixel_format = SG_PIXELFORMAT_RGBA8,
+			.min_filter = SG_FILTER_LINEAR,
+			.mag_filter = SG_FILTER_LINEAR,
+			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
+			.content.subimage[0][0] = {.ptr = pixels, .size = sizeof(pixels)},
+		});
+		free(pixels);
+		
+		node = malloc(sizeof(*node));
+		(*node) = (tile_node){
+			.matrix = DRIFT_AFFINE_IDENTITY,
+			.texture = texture,
+		};
+	}
+	
+	return node;
+}
 
 static void display_task(tina_task* task){
 	display_task_ctx* ctx = task->data;
@@ -200,35 +262,7 @@ static void display_task(tina_task* task){
 	sgl_matrix_mode_projection();
 	sgl_load_matrix(DriftAffineToGPU(proj_matrix).m);
 	
-	sgl_matrix_mode_modelview();
-	sgl_load_matrix(DriftAffineToGPU(view_matrix).m);
-	
-	if(TREE_ROOT){
-		sgl_texture(TREE_ROOT->texture);
-		sgl_begin_triangle_strip();
-			sgl_v2f_t2f(-1, -1, 0, 0);
-			sgl_v2f_t2f( 1, -1, 1, 0);
-			sgl_v2f_t2f(-1,  1, 0, 1);
-			sgl_v2f_t2f( 1,  1, 1, 1);
-		sgl_end();
-	} else {
-		puts("render");
-		TREE_ROOT = malloc(sizeof(*TREE_ROOT));
-		
-		uint8_t* pixels = malloc(4*256*256);
-		mandelbrot_render(pixels);
-		
-		TREE_ROOT->texture = sg_make_image(&(sg_image_desc){
-			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
-			.pixel_format = SG_PIXELFORMAT_RGBA8,
-			.min_filter = SG_FILTER_LINEAR,
-			.mag_filter = SG_FILTER_LINEAR,
-			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
-			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
-			.content.subimage[0][0] = {.ptr = pixels, .size = sizeof(pixels)},
-		});
-		free(pixels);
-	}
+	TREE_ROOT = visit_tiles(TREE_ROOT);
 	
 	sgl_draw();
 	sg_end_pass();
@@ -241,14 +275,7 @@ static void app_display(void){
 	tina_tasks_wait_sleep(TASKS, &group, 0);
 }
 
-static DriftVec2 pixel_to_world(DriftVec2 pos){
-	DriftVec2 clip_pos = {2*pos.x/sapp_width() - 1, 1 - 2*pos.y/sapp_height()};
-	DriftAffine vp_inv_matrix = DriftAffineInverse(DriftAffineMult(proj_matrix, view_matrix));
-	return DriftAffinePoint(vp_inv_matrix, clip_pos);
-}
-
 static bool mouse_drag;
-static DriftVec2 mouse_pos;
 
 static void app_event(const sapp_event *event){
 	switch(event->type){
@@ -258,12 +285,11 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_MOVE: {
-			// ChipmunkDemoMouse = MouseToSpace(event);
 			DriftVec2 new_pos = (DriftVec2){event->mouse_x, event->mouse_y};
 			if(mouse_drag){
-				DriftVec2 m0 = pixel_to_world(mouse_pos);
-				DriftVec2 m1 = pixel_to_world(new_pos);
-				DriftAffine t = {1, 0, 0, 1, m1.x - m0.x, m1.y - m0.y};
+				DriftVec2 mouse_delta = {new_pos.x - mouse_pos.x, new_pos.y - mouse_pos.y};
+				DriftVec2 delta = DriftAffineVec(pixel_to_world_matrix(), mouse_delta);
+				DriftAffine t = {1, 0, 0, 1, delta.x, delta.y};
 				view_matrix = DriftAffineMult(view_matrix, t);
 			}
 			mouse_pos = new_pos;
@@ -278,7 +304,7 @@ static void app_event(const sapp_event *event){
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
 			float scale = exp(0.1*event->scroll_y);
-			DriftVec2 mpos = pixel_to_world(mouse_pos);
+			DriftVec2 mpos = DriftAffinePoint(pixel_to_world_matrix(), mouse_pos);
 			DriftAffine t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = DriftAffineMult(view_matrix, t);
 		} break;
