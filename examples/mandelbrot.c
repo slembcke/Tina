@@ -93,7 +93,7 @@ typedef struct {
 
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 	const unsigned maxi = 1024;
-	const unsigned sample_count = 1;
+	const unsigned sample_count = 4;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
 		for(size_t px = 0; px < TEXTURE_SIZE; px++){
@@ -199,34 +199,30 @@ static void draw_tile(DriftAffine mv_matrix, sg_image texture){
 	
 	sgl_texture(texture);
 	sgl_begin_triangle_strip();
-		sgl_v2f_t2f(-1, -1, 0, 0);
-		sgl_v2f_t2f( 1, -1, 1, 0);
-		sgl_v2f_t2f(-1,  1, 0, 1);
-		sgl_v2f_t2f( 1,  1, 1, 1);
+		sgl_v2f_t2f(-1, -1, -1, -1);
+		sgl_v2f_t2f( 1, -1,  1, -1);
+		sgl_v2f_t2f(-1,  1, -1,  1);
+		sgl_v2f_t2f( 1,  1,  1,  1);
 	sgl_end();
 }
 
-static void visit_tile(tile_node* node, DriftAffine matrix){
+static bool visit_tile(tile_node* node, DriftAffine matrix){
 	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
-	DriftAffine mvp_matrix = DriftAffineMult(proj_matrix, mv_matrix);
-	if(!frustum_cull(mvp_matrix)) return;
+	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
 	if(node->texture.id){
 		// TODO rearrange?
 		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
-		double scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
-		if(scale > 1.5*TEXTURE_SIZE){
-			if(node->children){
-				visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
-				visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
-				visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
-				visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
-			} else {
-				node->children = calloc(4, sizeof(*node->children));
-				draw_tile(mvp_matrix, node->texture);
-			}
-		} else {
-			draw_tile(mvp_matrix, node->texture);
+		double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+		if(scale > TEXTURE_SIZE){
+			if(!node->children) node->children = calloc(4, sizeof(*node->children));
+			
+			draw_tile(mv_matrix, node->texture);
+			visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
+			visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
+			visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
+			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
+			return true;
 		}
 	} else if(!node->requested){
 		node->requested = true;
@@ -240,6 +236,8 @@ static void visit_tile(tile_node* node, DriftAffine matrix){
 		
 		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, NULL);
 	}
+	
+	return false;
 }
 
 static void display_task(tina_task* task){
@@ -258,6 +256,14 @@ static void display_task(tina_task* task){
 	
 	sgl_matrix_mode_projection();
 	sgl_load_matrix(DriftAffineToGPU(proj_matrix).m);
+	
+	sgl_matrix_mode_texture();
+	sgl_load_matrix((float[]){
+		0.5, 0.0, 0, 0,
+		0.0, 0.5, 0, 0,
+		0.0, 0.0, 1, 0,
+		0.5, 0.5, 0, 1,
+	});
 	
 	visit_tile(&TREE_ROOT, (DriftAffine){2, 0, 0, 2, -1, 0});
 	
