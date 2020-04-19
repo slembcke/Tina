@@ -17,6 +17,7 @@
 #include "tina_tasks.h"
 
 tina_tasks* TASKS;
+tina_tasks* GL_TASKS;
 
 typedef struct {
 	thrd_t thread;
@@ -137,7 +138,6 @@ struct tile_node {
 	sg_image texture;
 	
 	bool requested;
-	void* pixels;
 	
 	uint64_t timestamp;
 	tile_node* children;
@@ -151,11 +151,21 @@ typedef struct {
 	tile_node* node;
 } generate_tile_ctx;
 
+static void upload_tile_task(tina_task* task){
+	generate_tile_ctx *ctx = task->data;
+	tile_node* node = ctx->node;
+	
+	printf("loaded %d\n", TEXTURE_CURSOR);
+	node->texture = TEXTURE_CACHE[TEXTURE_CURSOR++ & (TEXTURE_CACHE_SIZE - 1)];
+	sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = ctx->pixels}});
+	free(ctx->pixels);
+	free(ctx);
+}
+
 static void generate_tile_task(tina_task* task){
 	generate_tile_ctx *ctx = task->data;
 	mandelbrot_render(ctx->pixels, ctx->matrix);
-	ctx->node->pixels = ctx->pixels;
-	free(ctx);
+	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
 }
 
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
@@ -229,19 +239,16 @@ static void visit_tile(tile_node* node, DriftAffine matrix){
 		};
 		
 		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, NULL);
-	} else if(node->pixels){
-		printf("loaded %d\n", TEXTURE_CURSOR);
-		node->requested = false;
-		node->texture = TEXTURE_CACHE[TEXTURE_CURSOR++ & (TEXTURE_CACHE_SIZE - 1)];
-		sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = node->pixels}});
-		free(node->pixels);
 	}
 }
 
 static void display_task(tina_task* task){
 	display_task_ctx* ctx = task->data;
-	
 	_sapp_glx_make_current();
+	
+	// Run tasks to load textures.
+	tina_tasks_run(GL_TASKS, true, NULL);
+	
 	int w = sapp_width(), h = sapp_height();
 	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 1}}};
 	sg_begin_default_pass(&action, w, h);
@@ -303,13 +310,17 @@ static void app_event(const sapp_event *event){
 	}
 }
 
+tina_tasks* tina_tasks_new(size_t task_count, size_t coroutine_count, size_t stack_size){
+	void* tasks_buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
+	return tina_tasks_init(tasks_buffer, task_count, coroutine_count, stack_size);
+}
+
 static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating TASKS.");
-	size_t task_count = 1024, coroutine_count = 128, stack_size = 64*1024;
-	void* buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
-	TASKS = tina_tasks_init(buffer, task_count, coroutine_count, stack_size);
+	TASKS = tina_tasks_new(1024, 128, 64*1024);
+	GL_TASKS = tina_tasks_new(64, 16, 64*1024);
 	
 	puts("Creating WORKERS.");
 	for(int i = 0; i < WORKER_COUNT; i++){
