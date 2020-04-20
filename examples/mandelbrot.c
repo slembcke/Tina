@@ -86,16 +86,48 @@ static inline DriftGPUMatrix DriftAffineToGPU(DriftAffine m){
 	return (DriftGPUMatrix){.m = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.x, m.y, 0, 1}};
 }
 
+#define TASK_GROUP_MAX 32
+
+uint64_t TIMESTAMP;
+
+typedef struct tile_node tile_node;
+struct tile_node {
+	sg_image texture;
+	
+	bool requested;
+	
+	uint64_t timestamp;
+	tile_node* children;
+};
+
+static tile_node TREE_ROOT;
+
+typedef struct {
+	void* pixels;
+	DriftAffine matrix;
+	tile_node* node;
+} generate_tile_ctx;
+
 typedef struct {
 	unsigned xmin, xmax;
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
-static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
+static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
 	const unsigned maxi = 1024;
 	const unsigned sample_count = 4;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
+		generate_tile_ctx *ctx = task->data;
+		if(ctx->node->timestamp + 16 < TIMESTAMP){
+			// Task is stale. Abort.
+			ctx->node->requested = false;
+			free(ctx->pixels);
+			free(ctx);
+			
+			tina_task_abort(tasks, task);
+		}
+		
 		for(size_t px = 0; px < TEXTURE_SIZE; px++){
 			double value = 0;
 			for(unsigned sample = 0; sample < sample_count; sample++){
@@ -134,28 +166,6 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 	}
 }
 
-#define TASK_GROUP_MAX 32
-
-uint64_t TIMESTAMP;
-
-typedef struct tile_node tile_node;
-struct tile_node {
-	sg_image texture;
-	
-	bool requested;
-	
-	uint64_t timestamp;
-	tile_node* children;
-};
-
-static tile_node TREE_ROOT;
-
-typedef struct {
-	void* pixels;
-	DriftAffine matrix;
-	tile_node* node;
-} generate_tile_ctx;
-
 size_t TEXTURE_CURSOR;
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
@@ -183,7 +193,7 @@ static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
-	mandelbrot_render(ctx->pixels, ctx->matrix);
+	mandelbrot_render(ctx->pixels, ctx->matrix, tasks, task);
 	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
 }
 
@@ -229,9 +239,9 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
 	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
+	node->timestamp = TIMESTAMP;
+	
 	if(node->texture.id){
-		node->timestamp = TIMESTAMP;
-		
 		// TODO rearrange?
 		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
 		double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
