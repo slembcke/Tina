@@ -151,7 +151,7 @@ typedef struct {
 	tile_node* node;
 } generate_tile_ctx;
 
-static void upload_tile_task(tina_task* task){
+static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
 	tile_node* node = ctx->node;
 	
@@ -162,7 +162,7 @@ static void upload_tile_task(tina_task* task){
 	free(ctx);
 }
 
-static void generate_tile_task(tina_task* task){
+static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
 	mandelbrot_render(ctx->pixels, ctx->matrix);
 	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
@@ -240,7 +240,7 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 	return false;
 }
 
-static void display_task(tina_task* task){
+static void display_task(tina_tasks* tasks, tina_task* task){
 	display_task_ctx* ctx = task->data;
 	_sapp_glx_make_current();
 	
@@ -248,7 +248,7 @@ static void display_task(tina_task* task){
 	tina_tasks_run(GL_TASKS, true, NULL);
 	
 	int w = sapp_width(), h = sapp_height();
-	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 0, 1}}};
+	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 1, 1}}};
 	sg_begin_default_pass(&action, w, h);
 	
 	sgl_defaults();

@@ -16,7 +16,7 @@ typedef struct tina_task tina_task;
 typedef struct tina_group tina_group;
 
 // Task function prototype.
-typedef void tina_task_func(tina_task* task);
+typedef void tina_task_func(tina_tasks* tasks, tina_task* task);
 
 struct tina_task {
 	// Task name. (optional)
@@ -124,7 +124,7 @@ static uintptr_t _tina_tasks_worker(tina* coro, uintptr_t value){
 		// Unlock the mutex while executing a task.
 		_TINA_MUTEX_UNLOCK(tasks->_lock); {
 			tina_task* task = (tina_task*)value;
-			task->func(task);
+			task->func(tasks, task);
 		} _TINA_MUTEX_LOCK(tasks->_lock);
 		
 		// Yield true (task completed) back to the tasks system, and recieve the next task.
@@ -314,23 +314,22 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 }
 
 typedef struct {
-	tina_tasks* tasks;
 	tina_group* group;
 	unsigned threshold;
 	_TINA_SIGNAL_T wakeup;
 } _tina_wakeup_context;
 
-static void _tina_tasks_sleep_wakeup(tina_task* task){
+static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
 	_tina_wakeup_context* ctx = task->data;
-	tina_tasks_wait(ctx->tasks, task, ctx->group, ctx->threshold);
+	tina_tasks_wait(tasks, task, ctx->group, ctx->threshold);
 	
-	_TINA_MUTEX_LOCK(ctx->tasks->_lock); {
+	_TINA_MUTEX_LOCK(tasks->_lock); {
 		_TINA_SIGNAL_BROADCAST(ctx->wakeup);
-	} _TINA_MUTEX_UNLOCK(ctx->tasks->_lock);
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group, unsigned threshold){
-	_tina_wakeup_context ctx = {.tasks = tasks, .group = group, .threshold = threshold};
+	_tina_wakeup_context ctx = {.group = group, .threshold = threshold};
 	_TINA_SIGNAL_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock); {
