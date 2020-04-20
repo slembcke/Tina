@@ -108,17 +108,23 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 				});
 				
 				unsigned i = 0;
-				while(z.x*z.x + z.y*z.y <= 4 && i < maxi){
+				while(z.x*z.x + z.y*z.y <= 256 && i < maxi){
 					double tmp = z.x*z.x - z.y*z.y + c.x;
 					z.y = 2*z.x*z.y + c.y;
 					z.x = tmp;
 					i++;
 				}
 				
-				value += (i < maxi ? exp(-1e-2*i) : 0);
+				if(i < maxi){
+					// double n = i;
+					double n = i - log2(log2(z.x*z.x + z.y*z.y)) + 4;
+					value += 0.5*cos((log2(n))) + 0.5;
+				}
 			}
 			
-			uint8_t intensity = 255*value/sample_count;
+			// uint8_t intensity = 255*value/sample_count;
+			double dither = ((px*193 + py*146) & 0xFF)/255.0;
+			uint8_t intensity = 255*value/sample_count + dither;
 			const int stride = 4*TEXTURE_SIZE;
 			pixels[4*px + py*stride + 0] = intensity;
 			pixels[4*px + py*stride + 1] = intensity;
@@ -130,8 +136,7 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix){
 
 #define TASK_GROUP_MAX 32
 
-sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
-unsigned TEXTURE_CURSOR;
+uint64_t TIMESTAMP;
 
 typedef struct tile_node tile_node;
 struct tile_node {
@@ -151,13 +156,27 @@ typedef struct {
 	tile_node* node;
 } generate_tile_ctx;
 
+size_t TEXTURE_CURSOR;
+tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
+sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
+
 static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
 	tile_node* node = ctx->node;
 	
-	printf("loaded %d\n", TEXTURE_CURSOR);
-	node->texture = TEXTURE_CACHE[TEXTURE_CURSOR++ & (TEXTURE_CACHE_SIZE - 1)];
+	size_t cursor = TEXTURE_CURSOR;
+	while(TEXTURE_NODE[cursor] && TEXTURE_NODE[cursor]->timestamp == TIMESTAMP){
+		cursor = (cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	}
+	TEXTURE_CURSOR = (cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	
+	if(TEXTURE_NODE[cursor]) TEXTURE_NODE[cursor]->texture.id = 0;
+	
+	TEXTURE_NODE[cursor] = node;
+	node->texture = TEXTURE_CACHE[cursor];
 	sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = ctx->pixels}});
+	node->requested = false;
+	
 	free(ctx->pixels);
 	free(ctx);
 }
@@ -211,6 +230,8 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
 	if(node->texture.id){
+		node->timestamp = TIMESTAMP;
+		
 		// TODO rearrange?
 		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
 		double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
@@ -246,6 +267,7 @@ static void display_task(tina_tasks* tasks, tina_task* task){
 	
 	// Run tasks to load textures.
 	tina_tasks_run(GL_TASKS, true, NULL);
+	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
 	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 1, 1}}};
@@ -306,7 +328,7 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			double scale = exp(0.1*event->scroll_y);
+			double scale = exp(-0.5*event->scroll_y);
 			DriftVec2 mpos = DriftAffinePoint(pixel_to_world_matrix(), mouse_pos);
 			DriftAffine t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = DriftAffineMult(view_matrix, t);
@@ -326,7 +348,7 @@ static void app_init(void){
 	
 	puts("Creating TASKS.");
 	TASKS = tina_tasks_new(1024, 128, 64*1024);
-	GL_TASKS = tina_tasks_new(64, 16, 64*1024);
+	GL_TASKS = tina_tasks_new(256, 16, 64*1024);
 	
 	puts("Creating WORKERS.");
 	for(int i = 0; i < WORKER_COUNT; i++){
