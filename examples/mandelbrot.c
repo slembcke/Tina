@@ -16,8 +16,10 @@
 #define TINA_TASKS_IMPLEMENTATION
 #include "tina_tasks.h"
 
+#define MAX_TASKS 1024
 tina_tasks* TASKS;
 tina_tasks* GL_TASKS;
+tina_group TASKS_GOVERNOR;
 
 typedef struct {
 	thrd_t thread;
@@ -115,7 +117,7 @@ typedef struct {
 
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
 	const unsigned maxi = 1024;
-	const unsigned sample_count = 4;
+	const unsigned sample_count = 1;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
 		generate_tile_ctx *ctx = task->data;
@@ -133,30 +135,34 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint32_t ssx = ((uint32_t)px << 16) + (uint16_t)(49472*sample);
 				uint32_t ssy = ((uint32_t)py << 16) + (uint16_t)(37345*sample);
-				DriftVec2 z = {0, 0};
 				DriftVec2 c = DriftAffinePoint(matrix, (DriftVec2){
 					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				});
+				DriftVec2 z = c;
 				
+				double min = INFINITY;
 				unsigned i = 0;
 				while(z.x*z.x + z.y*z.y <= 256 && i < maxi){
+					min = fmin(min, sqrt(z.x*z.x + z.y*z.y));
 					double tmp = z.x*z.x - z.y*z.y + c.x;
 					z.y = 2*z.x*z.y + c.y;
 					z.x = tmp;
 					i++;
 				}
 				
-				if(i < maxi){
-					// double n = i;
-					double n = i - log2(log2(z.x*z.x + z.y*z.y)) + 4;
-					value += 0.5*cos((log2(n))) + 0.5;
-				}
+				value += min;
+				// if(i < maxi){
+				// 	// double n = i;
+				// 	double n = i - log2(log2(z.x*z.x + z.y*z.y)) + 4;
+				// 	value += 0.5*cos((log2(n))) + 0.5;
+				// }
 			}
 			
-			// uint8_t intensity = 255*value/sample_count;
-			double dither = ((px*193 + py*146) & 0xFF)/255.0;
-			uint8_t intensity = 255*value/sample_count + dither;
+			double dither = ((px*193 + py*146) & 0xFF)/65536.0;
+			value = fmax(0, fmin(value + dither, 1));
+			
+			uint8_t intensity = 255*value/sample_count;
 			const int stride = 4*TEXTURE_SIZE;
 			pixels[4*px + py*stride + 0] = intensity;
 			pixels[4*px + py*stride + 1] = intensity;
@@ -235,7 +241,7 @@ static void draw_tile(DriftAffine mv_matrix, sg_image texture){
 	sgl_end();
 }
 
-static bool visit_tile(tile_node* node, DriftAffine matrix){
+static bool visit_tile(tina_task* task, tile_node* node, DriftAffine matrix){
 	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
 	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
@@ -249,10 +255,10 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			if(!node->children) node->children = calloc(4, sizeof(*node->children));
 			
 			draw_tile(mv_matrix, node->texture);
-			visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
-			visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
-			visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
-			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
+			visit_tile(task, node->children + 0, sub_matrix(matrix, -0.5, -0.5));
+			visit_tile(task, node->children + 1, sub_matrix(matrix,  0.5, -0.5));
+			visit_tile(task, node->children + 2, sub_matrix(matrix, -0.5,  0.5));
+			visit_tile(task, node->children + 3, sub_matrix(matrix,  0.5,  0.5));
 			return true;
 		}
 	} else if(!node->requested){
@@ -265,7 +271,8 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			.node = node,
 		};
 		
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, NULL);
+		tina_tasks_wait(TASKS, task, &TASKS_GOVERNOR, MAX_TASKS/2);
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, &TASKS_GOVERNOR);
 	}
 	
 	return false;
@@ -297,7 +304,7 @@ static void display_task(tina_tasks* tasks, tina_task* task){
 		0.5, 0.5, 0, 1,
 	});
 	
-	visit_tile(&TREE_ROOT, (DriftAffine){2, 0, 0, 2, -1, 0});
+	visit_tile(task, &TREE_ROOT, (DriftAffine){2, 0, 0, 2, -1, 0});
 	
 	sgl_draw();
 	sg_end_pass();
@@ -357,8 +364,9 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating TASKS.");
-	TASKS = tina_tasks_new(1024, 128, 64*1024);
-	GL_TASKS = tina_tasks_new(256, 16, 64*1024);
+	TASKS = tina_tasks_new(MAX_TASKS, 128, 64*1024);
+	GL_TASKS = tina_tasks_new(MAX_TASKS, 16, 64*1024);
+	tina_group_init(&TASKS_GOVERNOR);
 	
 	puts("Creating WORKERS.");
 	for(int i = 0; i < WORKER_COUNT; i++){
@@ -399,6 +407,7 @@ static void app_cleanup(void){
 	// tina_tasks_wait_sleep(TASKS, &group, 0);
 	
 	puts("WORKERS shutdown.");
+	TIMESTAMP += 1000;
 	tina_tasks_pause(TASKS);
 	for(int i = 0; i < WORKER_COUNT; i++) thrd_join(WORKERS[i].thread, NULL);
 	
