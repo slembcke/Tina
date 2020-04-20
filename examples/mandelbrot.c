@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <math.h>
+#include <tgmath.h>
+#include <complex.h>
 #include <threads.h>
 
 #define SOKOL_IMPL
@@ -116,8 +117,9 @@ typedef struct {
 } mandelbrot_window;
 
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
-	const unsigned maxi = 1024;
-	const unsigned sample_count = 1;
+	const unsigned maxi = 2048;
+	const double bailout = 256;
+	const unsigned sample_count = 4;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
 		generate_tile_ctx *ctx = task->data;
@@ -131,43 +133,65 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 		}
 		
 		for(size_t px = 0; px < TEXTURE_SIZE; px++){
-			double value = 0;
+			double r = 0, g = 0, b = 0;
 			for(unsigned sample = 0; sample < sample_count; sample++){
 				uint32_t ssx = ((uint32_t)px << 16) + (uint16_t)(49472*sample);
 				uint32_t ssy = ((uint32_t)py << 16) + (uint16_t)(37345*sample);
-				DriftVec2 c = DriftAffinePoint(matrix, (DriftVec2){
+				DriftVec2 p = DriftAffinePoint(matrix, (DriftVec2){
 					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				});
-				DriftVec2 z = c;
+				double complex c = CMPLX(p.x, p.y);
+				double complex z = c;
+				double complex dz = 1;
 				
 				double min = INFINITY;
 				unsigned i = 0;
-				while(z.x*z.x + z.y*z.y <= 256 && i < maxi){
-					min = fmin(min, sqrt(z.x*z.x + z.y*z.y));
-					double tmp = z.x*z.x - z.y*z.y + c.x;
-					z.y = 2*z.x*z.y + c.y;
-					z.x = tmp;
+				while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
+					dz = 2*z*dz;
+					if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
+						i = maxi;
+						break;
+					}
+					
+					// min = fmin(min, cabs(CMPLX(-1, 1) - z));
+					// min = fmin(min, fabs(creal(-0.75 - z)));
+					// min = fmin(min, fabs(cimag(z)));
+					
+					z = z*z + c;
 					i++;
 				}
 				
-				value += min;
+				// r += (min > 1e-2);
 				// if(i < maxi){
-				// 	// double n = i;
-				// 	double n = i - log2(log2(z.x*z.x + z.y*z.y)) + 4;
-				// 	value += 0.5*cos((log2(n))) + 0.5;
+					// double n = i;
+					// double n = i - log2(log2(cabs(z))) + 4;
+					// r += 0.5*cos((log2(n))) + 0.5;
+					
+					// Canonical remainder.
+					// r += log2(log2(cabs(z))) - log2(log2(bailout));
+					
+					// z /= bailout*bailout;
+					// r+= 1 + log2(cabs(z))/log2(bailout);
+					
+					// z = cpow(z, log(bailout)/log(cabs(z)))/bailout;
+					z /= bailout;
+					r += (unsigned)(floor(creal(z)) + floor(cimag(z))) & 1;
+					g = b = r;
+					
+					// z /= bailout*bailout;
+					// r += 0.5 + 0.5*creal(z);
+					// g += 0.5 + 0.5*cimag(z);
 				// }
 			}
+			// g = b = r;
 			
 			double dither = ((px*193 + py*146) & 0xFF)/65536.0;
-			value = fmax(0, fmin(value + dither, 1));
-			
-			uint8_t intensity = 255*value/sample_count;
 			const int stride = 4*TEXTURE_SIZE;
-			pixels[4*px + py*stride + 0] = intensity;
-			pixels[4*px + py*stride + 1] = intensity;
-			pixels[4*px + py*stride + 2] = intensity;
-			pixels[4*px + py*stride + 3] = intensity;
+			pixels[4*px + py*stride + 0] = 255*fmax(0, fmin(r/sample_count + dither, 1));
+			pixels[4*px + py*stride + 1] = 255*fmax(0, fmin(g/sample_count + dither, 1));
+			pixels[4*px + py*stride + 2] = 255*fmax(0, fmin(b/sample_count + dither, 1));
+			pixels[4*px + py*stride + 3] = 0;
 		}
 	}
 }
