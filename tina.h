@@ -25,6 +25,8 @@ struct tina {
 	bool running;
 	// Pointer to the coroutine's memory buffer.
 	void* buffer;
+	// Size of the buffer.
+	size_t size;
 	
 	// Private implementation details.
 	void* _sp;
@@ -68,6 +70,8 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->running = true;
+	coro->buffer = buffer;
+	coro->size = size;
 	coro->_magic = _TINA_MAGIC;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);

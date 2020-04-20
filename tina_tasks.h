@@ -67,7 +67,12 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsi
 // Similar to pthread_join() as a convenience method. Enqueues some tasks and waits on them.
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task);
 
+void tina_task_abort(tina_tasks* tasks, tina_task* task);
+
 #ifdef TINA_TASKS_IMPLEMENTATION
+
+// TODO associate groups with tasks?
+// TODO tina_tasks_run take a number of tasks to run maybe?
 
 // Override these. Based on C11 primitives.
 #ifndef _TINA_MUTEX_T
@@ -107,7 +112,13 @@ struct tina_tasks {
 	_tina_queue _task[TINA_TASKS_PRIORITIES];
 };
 
-static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
+enum _TINA_STATUS {
+	_TINA_STATUS_COMPLETE,
+	_TINA_STATUS_WAITING,
+	_TINA_STATUS_ABORTED,
+};
+
+static uintptr_t _tina_tasks_worker(tina* coro, uintptr_t value){
 	tina_tasks* tasks = (tina_tasks*)coro->user_data;
 	while(true){
 		// Unlock the mutex while executing a task.
@@ -117,7 +128,7 @@ static uintptr_t _tina_task_worker(tina* coro, uintptr_t value){
 		} _TINA_MUTEX_LOCK(tasks->_lock);
 		
 		// Yield true (task completed) back to the tasks system, and recieve the next task.
-		value = tina_yield(coro, true);
+		value = tina_yield(coro, _TINA_STATUS_COMPLETE);
 	}
 	
 	// Unreachable.
@@ -154,7 +165,7 @@ tina_tasks* tina_tasks_init(void* buffer, size_t task_count, size_t coro_count, 
 	// Initialize the coroutines and fill the pool.
 	tasks->_coro.count = coro_count;
 	for(unsigned i = 0; i < coro_count; i++){
-		tina* coro = tina_init(buffer, stack_size, _tina_task_worker, &tasks);
+		tina* coro = tina_init(buffer, stack_size, _tina_tasks_worker, &tasks);
 		coro->name = "TINA TASK WORKER";
 		coro->user_data = tasks;
 		tasks->_coro.arr[i] = coro;
@@ -198,7 +209,13 @@ static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task, void* t
 	// Update the thread data.
 	task->thread_data = thread_data;
 	
-	if(tina_yield(task->_coro, (uintptr_t)task)){
+	enum _TINA_STATUS status = tina_yield(task->_coro, (uintptr_t)task);
+	if(status != _TINA_STATUS_WAITING){
+		if(status == _TINA_STATUS_ABORTED){
+			// Need to reinit the coroutine.
+			tina_init(task->_coro, task->_coro->size, _tina_tasks_worker, tasks);
+		}
+		
 		// This task has completed. Return it to the pool.
 		tasks->_pool.arr[tasks->_pool.count++] = task;
 		tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
@@ -279,7 +296,7 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsi
 		if(--group->_count > threshold){
 			group->_count -= threshold;
 			// Yield until the counter hits zero.
-			tina_yield(group->_task->_coro, false);
+			tina_yield(group->_task->_coro, _TINA_STATUS_WAITING);
 			// Restore the counter for the remaining tasks.
 			group->_count += threshold;
 		}
@@ -324,6 +341,13 @@ void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group, unsigned thresh
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 	
 	_TINA_SIGNAL_DESTROY(ctx.wakeup);
+}
+
+void tina_task_abort(tina_tasks* tasks, tina_task* task){
+	// TODO it would be bad to allow this to be called externally.
+	_TINA_MUTEX_LOCK(tasks->_lock); {
+		tina_yield(task->_coro, _TINA_STATUS_ABORTED);
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
