@@ -116,8 +116,15 @@ typedef struct {
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
-double addend(complex z){return creal(z/cabs(z));}
 double hermite(double x){return x*x*(3 - 2*x);}
+
+double addend_cosnorm(complex z){return creal(z/cabs(z));}
+
+double addend_triangle(complex z, complex c){
+	double min = fabs(cabs(z*z) - cabs(c));
+	double max = cabs(z*z) + cabs(c);
+	return (cabs(z*z + c) - min)/(max - min);
+}
 
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
 	const unsigned maxi = 1024;
@@ -162,7 +169,7 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 					// min = fmin(min, cabs(CMPLX(-1, 1) - z));
 					// min = fmin(min, fabs(creal(-0.75 - z)));
 					
-					sum += addend(z);
+					sum += addend_triangle(z, c);
 					
 					z = z*z + c;
 					i++;
@@ -175,7 +182,7 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 					// g += fmod(n, 1);
 					
 					double alpha = hermite(rem);
-					r += 0.5 + 0.5*(sum + alpha*addend(z))/(i + alpha);
+					r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
 					g = b = r;
 				}
 			}
