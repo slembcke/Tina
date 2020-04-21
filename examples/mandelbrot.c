@@ -156,7 +156,7 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 				double complex dz = 1;
 				
 				// double min = INFINITY;
-				double sum = 0;
+				// double sum = 0;
 				
 				unsigned i = 0;
 				while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
@@ -169,7 +169,7 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 					// min = fmin(min, cabs(CMPLX(-1, 1) - z));
 					// min = fmin(min, fabs(creal(-0.75 - z)));
 					
-					sum += addend_triangle(z, c);
+					// sum += addend_triangle(z, c);
 					
 					z = z*z + c;
 					i++;
@@ -177,16 +177,17 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 				
 				if(i < maxi){
 					double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
-					// double n = (i - 1) + rem;
+					double n = (i - 1) + rem;
+					r += 1 - exp(-1e-2*n);
 					// r += n;
 					// g += fmod(n, 1);
 					
-					double alpha = hermite(rem);
-					r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
-					g = b = r;
+					// double alpha = hermite(rem);
+					// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
+					// g = b = r;
 				}
 			}
-			// g = b = r;
+			g = b = r;
 			
 			double dither = ((px*193 + py*146) & 0xFF)/65536.0;
 			const int stride = 4*TEXTURE_SIZE;
@@ -225,6 +226,7 @@ static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
+	ctx->pixels = malloc(4*256*256),
 	mandelbrot_render(ctx->pixels, ctx->matrix, tasks, task);
 	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
 }
@@ -292,7 +294,6 @@ static bool visit_tile(tina_task* task, tile_node* node, DriftAffine matrix){
 		
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
 		(*generate_ctx) = (generate_tile_ctx){
-			.pixels = malloc(4*256*256),
 			.matrix = matrix,
 			.node = node,
 		};
