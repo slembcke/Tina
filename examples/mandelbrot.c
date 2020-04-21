@@ -237,8 +237,8 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 	const double complex* coords = ctx->coords;
 	uint8_t* pixels = ctx->pixels;
 	
-	double r = 0, g = 0, b = 0;
 	for(unsigned idx = 0; idx < TEXTURE_SIZE; idx++){
+		double r = 0, g = 0, b = 0;
 		double complex c = coords[idx];
 		double complex z = c;
 		double complex dz = 1;
@@ -276,9 +276,6 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		}
 		
 		g = b = r;
-		r = 0*creal(c);
-		g = 0*cimag(c);
-		// b = cabs(c)/16;
 		
 		// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
 		pixels[4*idx + 0] = 255*fmax(0, fmin(r, 1));
