@@ -116,9 +116,11 @@ typedef struct {
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
+double foobar(complex z){return creal(z/cabs(z));}
+
 static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
-	const unsigned maxi = 2048;
-	const double bailout = 256;
+	const unsigned maxi = 1024;
+	const double bailout = 16;
 	const unsigned sample_count = 4;
 	
 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
@@ -145,10 +147,12 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 				double complex z = c;
 				double complex dz = 1;
 				
-				double min = INFINITY;
+				// double min = INFINITY;
+				double sum = 0;
+				
 				unsigned i = 0;
 				while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
-					dz = 2*z*dz;
+					dz *= 2*z;
 					if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
 						i = maxi;
 						break;
@@ -158,31 +162,29 @@ static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* t
 					// min = fmin(min, fabs(creal(-0.75 - z)));
 					// min = fmin(min, fabs(cimag(z)));
 					
+					sum += foobar(z);
+					
 					z = z*z + c;
 					i++;
 				}
 				
 				// r += (min > 1e-2);
-				// if(i < maxi){
-					// double n = i;
-					// double n = i - log2(log2(cabs(z))) + 4;
-					// r += 0.5*cos((log2(n))) + 0.5;
+				if(i < maxi){
+					// r += i;
 					
-					// Canonical remainder.
-					// r += log2(log2(cabs(z))) - log2(log2(bailout));
+					double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+					double n = i + rem - 1;
+					// r += n;
+					// g += fmod(n, 1);
 					
-					// z /= bailout*bailout;
-					// r+= 1 + log2(cabs(z))/log2(bailout);
-					
-					// z = cpow(z, log(bailout)/log(cabs(z)))/bailout;
-					z /= bailout;
-					r += (unsigned)(floor(creal(z)) + floor(cimag(z))) & 1;
+					// r += 0.5 + 0.5*((sum + rem*foobar(z))/(i + rem));
+					double sum2 = sum + foobar(z);
+					double sum3 = (1 - rem)*sum/(i + 0) + (rem)*sum2/(i + 1);
+					r += 0.5 + 0.5*sum3;
+					// r += (sum)/n;
+					// r += n;
 					g = b = r;
-					
-					// z /= bailout*bailout;
-					// r += 0.5 + 0.5*creal(z);
-					// g += 0.5 + 0.5*cimag(z);
-				// }
+				}
 			}
 			// g = b = r;
 			
@@ -328,7 +330,7 @@ static void display_task(tina_tasks* tasks, tina_task* task){
 		0.5, 0.5, 0, 1,
 	});
 	
-	visit_tile(task, &TREE_ROOT, (DriftAffine){2, 0, 0, 2, -1, 0});
+	visit_tile(task, &TREE_ROOT, (DriftAffine){16, 0, 0, 16, 0, 0});
 	
 	sgl_draw();
 	sg_end_pass();

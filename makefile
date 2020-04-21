@@ -1,4 +1,4 @@
-CFLAGS = -Wall -g -O0
+CFLAGS = -Wall -g -Os -ffast-math
 
 .phony: clean default run
 
