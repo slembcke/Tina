@@ -12,27 +12,32 @@
 #include "sokol_gl.h"
 
 #define TINA_IMPLEMENTATION
-#include <tina.h>
+#include "../tina.h"
 
 #define TINA_TASKS_IMPLEMENTATION
-#include "tina_tasks.h"
+#include "../tina_tasks.h"
 
 #define MAX_TASKS 1024
 tina_tasks* TASKS;
-tina_tasks* GL_TASKS;
 tina_group TASKS_GOVERNOR;
+
+enum {
+	QUEUE_LO_PRIORITY,
+	QUEUE_HI_PRIORITY,
+	QUEUE_GL,
+};
 
 typedef struct {
 	thrd_t thread;
 } worker_context;
 
 #define MAX_WORKERS 16
-static unsigned WORKER_COUNT = 16;
+static unsigned WORKER_COUNT = MAX_WORKERS;
 worker_context WORKERS[MAX_WORKERS];
 
 static int worker_body(void* data){
 	worker_context* ctx = data;
-	tina_tasks_run(TASKS, false, ctx);
+	tina_tasks_run(TASKS, QUEUE_HI_PRIORITY, false, ctx);
 	return 0;
 }
 
@@ -131,7 +136,7 @@ tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
 
 static void upload_tile_task(tina_tasks* tasks, tina_task* task){
-	generate_tile_ctx *ctx = task->data;
+	generate_tile_ctx *ctx = task->user_data;
 	tile_node* node = ctx->node;
 	
 	size_t cursor = TEXTURE_CURSOR;
@@ -157,10 +162,10 @@ typedef struct {
 } render_scanline_ctx;
 
 static void render_scanline_task(tina_tasks* tasks, tina_task* task){
-	const unsigned maxi = 1024;
-	const double bailout = 16;
+	const unsigned maxi = 1*1024;
+	const double bailout = 256;
 	
-	render_scanline_ctx* ctx = task->data;
+	render_scanline_ctx* ctx = task->user_data;
 	const double complex* coords = ctx->coords;
 	uint8_t* pixels = ctx->pixels;
 	
@@ -176,7 +181,7 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		unsigned i = 0;
 		while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
 			dz *= 2*z;
-			if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
+			if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 0x1p-32){
 				i = maxi;
 				break;
 			}
@@ -193,7 +198,8 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		if(i < maxi){
 			double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
 			double n = (i - 1) + rem;
-			r += 1 - exp(-1e-2*n);
+			// r += 1 - exp(-1e-2*n);
+			r += 0.6 + 0.4*sin(log2(n));
 			// r += n;
 			// g += fmod(n, 1);
 			
@@ -213,7 +219,7 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 }
 
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
-	generate_tile_ctx *ctx = task->data;
+	generate_tile_ctx *ctx = task->user_data;
 	ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
 	double complex* coords = malloc(sizeof(*coords)*TEXTURE_SIZE*TEXTURE_SIZE);
 	render_scanline_ctx* scanline_data = malloc(sizeof(*scanline_data)*TEXTURE_SIZE);
@@ -221,12 +227,13 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	tina_group tile_governor; tina_group_init(&tile_governor);
 	
 	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
-		// if(ctx->node->timestamp + 16 < TIMESTAMP){
-		// 	// Task is stale. Abort.
-		// 	ctx->node->requested = false;
-		// 	free(ctx->pixels);
-		// 	goto cleanup;
-		// }
+		if(ctx->node->timestamp + 16 < TIMESTAMP){
+			// Task is stale. Abort.
+			tina_tasks_wait(tasks, task, &tile_governor, 0);
+			ctx->node->requested = false;
+			free(ctx->pixels);
+			goto cleanup;
+		}
 		
 		render_scanline_ctx* sctx = scanline_data + y;
 		sctx->coords = coords + y*TEXTURE_SIZE;
@@ -243,12 +250,12 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 		}
 		
 		tina_tasks_wait(tasks, task, &tile_governor, 4);
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = render_scanline_task, .data = sctx}, 1, &tile_governor);
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = render_scanline_task, .user_data = sctx, .queue_idx = QUEUE_LO_PRIORITY}, 1, &tile_governor);
 		// render_scanline_task(TASKS, &(tina_task){.func = render_scanline_task, .data = sctx});
 	}
-	tina_tasks_wait(tasks, task, &tile_governor, 0);
 	
-	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
+	tina_tasks_wait(tasks, task, &tile_governor, 0);
+	tina_tasks_enqueue(TASKS, &(tina_task){.func = upload_tile_task, .user_data = task->user_data, .queue_idx = QUEUE_GL}, 1, NULL);
 	
 	cleanup:
 	free(coords);
@@ -292,7 +299,7 @@ static void draw_tile(DriftAffine mv_matrix, sg_image texture){
 	sgl_end();
 }
 
-static bool visit_tile(tina_task* task, tile_node* node, DriftAffine matrix){
+static bool visit_tile(tile_node* node, DriftAffine matrix){
 	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
 	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
@@ -306,13 +313,13 @@ static bool visit_tile(tina_task* task, tile_node* node, DriftAffine matrix){
 			if(!node->children) node->children = calloc(4, sizeof(*node->children));
 			
 			draw_tile(mv_matrix, node->texture);
-			visit_tile(task, node->children + 0, sub_matrix(matrix, -0.5, -0.5));
-			visit_tile(task, node->children + 1, sub_matrix(matrix,  0.5, -0.5));
-			visit_tile(task, node->children + 2, sub_matrix(matrix, -0.5,  0.5));
-			visit_tile(task, node->children + 3, sub_matrix(matrix,  0.5,  0.5));
+			visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
+			visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
+			visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
+			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
 			return true;
 		}
-	} else if(!node->requested){
+	} else if(!node->requested && TASKS_GOVERNOR._count < MAX_WORKERS){
 		node->requested = true;
 		
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
@@ -321,19 +328,17 @@ static bool visit_tile(tina_task* task, tile_node* node, DriftAffine matrix){
 			.node = node,
 		};
 		
-		tina_tasks_wait(TASKS, task, &TASKS_GOVERNOR, MAX_TASKS/2);
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .data = generate_ctx, .priority = TINA_PRIORITY_LO}, 1, &TASKS_GOVERNOR);
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .user_data = generate_ctx, .queue_idx = QUEUE_HI_PRIORITY}, 1, &TASKS_GOVERNOR);
 	}
 	
 	return false;
 }
 
-static void display_task(tina_tasks* tasks, tina_task* task){
-	display_task_ctx* ctx = task->data;
+static void app_display(void){
 	_sapp_glx_make_current();
 	
 	// Run tasks to load textures.
-	tina_tasks_run(GL_TASKS, true, NULL);
+	tina_tasks_run(TASKS, QUEUE_GL, true, NULL);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
@@ -354,17 +359,11 @@ static void display_task(tina_tasks* tasks, tina_task* task){
 		0.5, 0.5, 0, 1,
 	});
 	
-	visit_tile(task, &TREE_ROOT, (DriftAffine){16, 0, 0, 16, 0, 0});
+	visit_tile(&TREE_ROOT, (DriftAffine){16, 0, 0, 16, 0, 0});
 	
 	sgl_draw();
 	sg_end_pass();
 	sg_commit();
-}
-
-static void app_display(void){
-	tina_group group; tina_group_init(&group);
-	tina_tasks_enqueue(TASKS, &(tina_task){.func = display_task, .data = NULL}, 1, &group);
-	tina_tasks_wait_sleep(TASKS, &group, 0);
 }
 
 static bool mouse_drag;
@@ -405,17 +404,12 @@ static void app_event(const sapp_event *event){
 	}
 }
 
-tina_tasks* tina_tasks_new(size_t task_count, size_t coroutine_count, size_t stack_size){
-	void* tasks_buffer = malloc(tina_tasks_size(task_count, coroutine_count, stack_size));
-	return tina_tasks_init(tasks_buffer, task_count, coroutine_count, stack_size);
-}
-
 static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating TASKS.");
-	TASKS = tina_tasks_new(MAX_TASKS, 128, 64*1024);
-	GL_TASKS = tina_tasks_new(MAX_TASKS, 16, 64*1024);
+	TASKS = tina_tasks_new(MAX_TASKS, 3, 128, 64*1024);
+	tina_tasks_queue_priority(TASKS, QUEUE_HI_PRIORITY, QUEUE_LO_PRIORITY);
 	tina_group_init(&TASKS_GOVERNOR);
 	
 	puts("Creating WORKERS.");
@@ -446,10 +440,7 @@ static void app_init(void){
 	sgl_desc_t gl_desc = {};
 	sgl_setup(&gl_desc);
 	
-	puts("Starting root task.");
-	tina_tasks_enqueue(TASKS, (tina_task[]){
-		// {.func = mandelbrot_task, .data = &(mandelbrot_window){.xmin = 0, .xmax = W, .ymin = 0, .ymax = H}},
-	}, 0, NULL);
+	puts("Init complete.");
 }
 
 static void app_cleanup(void){
@@ -475,8 +466,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
 		.frame_cb = app_display,
 		.event_cb = app_event,
 		.cleanup_cb = app_cleanup,
-		.width = 2000,
-		.height = 2000,
+		.width = 2048,
+		.height = 2048,
 		.window_title = "Mandelbrot",
 	};
 }

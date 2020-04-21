@@ -1,5 +1,7 @@
-CFLAGS =  -I.. -Wall -Werror -Wno-unused-variable -Wno-unused-function -g -O0
+CFLAGS =  -O0 -g -Wall -Werror -Wno-unused
 LDFLAGS = -pthread -lm -lGL -lX11 -ldl -g
+
+# CFLAGS += -Os -ffast-math
 
 .phony: clean default run
 
