@@ -126,78 +126,78 @@ double addend_triangle(complex z, complex c){
 	return (cabs(z*z + c) - min)/(max - min);
 }
 
-static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
-	const unsigned maxi = 1024;
-	const double bailout = 16;
-	const unsigned sample_count = 4;
+// static void mandelbrot_render(uint8_t *pixels, DriftAffine matrix, tina_tasks* tasks, tina_task* task){
+// 	const unsigned maxi = 1024;
+// 	const double bailout = 16;
+// 	const unsigned sample_count = 4;
 	
-	for(size_t py = 0; py < TEXTURE_SIZE; py++){
-		generate_tile_ctx *ctx = task->data;
-		if(ctx->node->timestamp + 16 < TIMESTAMP){
-			// Task is stale. Abort.
-			ctx->node->requested = false;
-			free(ctx->pixels);
-			free(ctx);
+// 	for(size_t py = 0; py < TEXTURE_SIZE; py++){
+// 		generate_tile_ctx *ctx = task->data;
+// 		if(ctx->node->timestamp + 16 < TIMESTAMP){
+// 			// Task is stale. Abort.
+// 			ctx->node->requested = false;
+// 			free(ctx->pixels);
+// 			free(ctx);
 			
-			tina_task_abort(tasks, task);
-		}
+// 			tina_task_abort(tasks, task);
+// 		}
 		
-		for(size_t px = 0; px < TEXTURE_SIZE; px++){
-			double r = 0, g = 0, b = 0;
-			for(unsigned sample = 0; sample < sample_count; sample++){
-				uint32_t ssx = ((uint32_t)px << 16) + (uint16_t)(49472*sample);
-				uint32_t ssy = ((uint32_t)py << 16) + (uint16_t)(37345*sample);
-				DriftVec2 p = DriftAffinePoint(matrix, (DriftVec2){
-					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-				});
-				double complex c = CMPLX(p.x, p.y);
-				double complex z = c;
-				double complex dz = 1;
+// 		for(size_t px = 0; px < TEXTURE_SIZE; px++){
+// 			double r = 0, g = 0, b = 0;
+// 			for(unsigned sample = 0; sample < sample_count; sample++){
+// 				uint32_t ssx = ((uint32_t)px << 16) + (uint16_t)(49472*sample);
+// 				uint32_t ssy = ((uint32_t)py << 16) + (uint16_t)(37345*sample);
+// 				DriftVec2 p = DriftAffinePoint(matrix, (DriftVec2){
+// 					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+// 					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+// 				});
+// 				double complex c = CMPLX(p.x, p.y);
+// 				double complex z = c;
+// 				double complex dz = 1;
 				
-				// double min = INFINITY;
-				// double sum = 0;
+// 				// double min = INFINITY;
+// 				// double sum = 0;
 				
-				unsigned i = 0;
-				while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
-					dz *= 2*z;
-					if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
-						i = maxi;
-						break;
-					}
+// 				unsigned i = 0;
+// 				while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
+// 					dz *= 2*z;
+// 					if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
+// 						i = maxi;
+// 						break;
+// 					}
 					
-					// min = fmin(min, cabs(CMPLX(-1, 1) - z));
-					// min = fmin(min, fabs(creal(-0.75 - z)));
+// 					// min = fmin(min, cabs(CMPLX(-1, 1) - z));
+// 					// min = fmin(min, fabs(creal(-0.75 - z)));
 					
-					// sum += addend_triangle(z, c);
+// 					// sum += addend_triangle(z, c);
 					
-					z = z*z + c;
-					i++;
-				}
+// 					z = z*z + c;
+// 					i++;
+// 				}
 				
-				if(i < maxi){
-					double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
-					double n = (i - 1) + rem;
-					r += 1 - exp(-1e-2*n);
-					// r += n;
-					// g += fmod(n, 1);
+// 				if(i < maxi){
+// 					double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+// 					double n = (i - 1) + rem;
+// 					r += 1 - exp(-1e-2*n);
+// 					// r += n;
+// 					// g += fmod(n, 1);
 					
-					// double alpha = hermite(rem);
-					// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
-					// g = b = r;
-				}
-			}
-			g = b = r;
+// 					// double alpha = hermite(rem);
+// 					// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
+// 					// g = b = r;
+// 				}
+// 			}
+// 			g = b = r;
 			
-			double dither = ((px*193 + py*146) & 0xFF)/65536.0;
-			const int stride = 4*TEXTURE_SIZE;
-			pixels[4*px + py*stride + 0] = 255*fmax(0, fmin(r/sample_count + dither, 1));
-			pixels[4*px + py*stride + 1] = 255*fmax(0, fmin(g/sample_count + dither, 1));
-			pixels[4*px + py*stride + 2] = 255*fmax(0, fmin(b/sample_count + dither, 1));
-			pixels[4*px + py*stride + 3] = 0;
-		}
-	}
-}
+// 			double dither = ((px*193 + py*146) & 0xFF)/65536.0;
+// 			const int stride = 4*TEXTURE_SIZE;
+// 			pixels[4*px + py*stride + 0] = 255*fmax(0, fmin(r/sample_count + dither, 1));
+// 			pixels[4*px + py*stride + 1] = 255*fmax(0, fmin(g/sample_count + dither, 1));
+// 			pixels[4*px + py*stride + 2] = 255*fmax(0, fmin(b/sample_count + dither, 1));
+// 			pixels[4*px + py*stride + 3] = 0;
+// 		}
+// 	}
+// }
 
 size_t TEXTURE_CURSOR;
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
@@ -224,11 +224,110 @@ static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 	free(ctx);
 }
 
+typedef struct {
+	double complex* coords;
+	uint8_t* pixels;
+} render_scanline_ctx;
+
+static void render_scanline_task(tina_tasks* tasks, tina_task* task){
+	const unsigned maxi = 1024;
+	const double bailout = 16;
+	
+	render_scanline_ctx* ctx = task->data;
+	const double complex* coords = ctx->coords;
+	uint8_t* pixels = ctx->pixels;
+	
+	double r = 0, g = 0, b = 0;
+	for(unsigned idx = 0; idx < TEXTURE_SIZE; idx++){
+		double complex c = coords[idx];
+		double complex z = c;
+		double complex dz = 1;
+		
+		// double min = INFINITY;
+		// double sum = 0;
+		
+		unsigned i = 0;
+		while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
+			dz *= 2*z;
+			if(creal(dz)*creal(dz) + cimag(dz)*cimag(dz) < 1e-8){
+				i = maxi;
+				break;
+			}
+			
+			// min = fmin(min, cabs(CMPLX(-1, 1) - z));
+			// min = fmin(min, fabs(creal(-0.75 - z)));
+			
+			// sum += addend_triangle(z, c);
+			
+			z = z*z + c;
+			i++;
+		}
+		
+		if(i < maxi){
+			double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+			double n = (i - 1) + rem;
+			r += 1 - exp(-1e-2*n);
+			// r += n;
+			// g += fmod(n, 1);
+			
+			// double alpha = hermite(rem);
+			// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
+			// g = b = r;
+		}
+		
+		g = b = r;
+		r = 0*creal(c);
+		g = 0*cimag(c);
+		// b = cabs(c)/16;
+		
+		// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
+		pixels[4*idx + 0] = 255*fmax(0, fmin(r, 1));
+		pixels[4*idx + 1] = 255*fmax(0, fmin(g, 1));
+		pixels[4*idx + 2] = 255*fmax(0, fmin(b, 1));
+		pixels[4*idx + 3] = 0;
+	}
+}
+
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->data;
-	ctx->pixels = malloc(4*256*256),
-	mandelbrot_render(ctx->pixels, ctx->matrix, tasks, task);
+	ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
+	double complex* coords = malloc(sizeof(*coords)*TEXTURE_SIZE*TEXTURE_SIZE);
+	render_scanline_ctx* scanline_data = malloc(sizeof(*scanline_data)*TEXTURE_SIZE);
+	
+	tina_group tile_governor; tina_group_init(&tile_governor);
+	
+	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
+		// if(ctx->node->timestamp + 16 < TIMESTAMP){
+		// 	// Task is stale. Abort.
+		// 	ctx->node->requested = false;
+		// 	free(ctx->pixels);
+		// 	goto cleanup;
+		// }
+		
+		render_scanline_ctx* sctx = scanline_data + y;
+		sctx->coords = coords + y*TEXTURE_SIZE;
+		sctx->pixels = ctx->pixels + 4*y*TEXTURE_SIZE;
+		
+		for(unsigned x = 0; x < TEXTURE_SIZE; x++){
+			uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*0);
+			uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*0);
+			DriftVec2 p = DriftAffinePoint(ctx->matrix, (DriftVec2){
+				2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+				2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+			});
+			sctx->coords[x] = CMPLX(p.x, p.y);
+		}
+		
+		tina_tasks_wait(tasks, task, &tile_governor, 4);
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = render_scanline_task, .data = sctx}, 1, &tile_governor);
+		// render_scanline_task(TASKS, &(tina_task){.func = render_scanline_task, .data = sctx});
+	}
+	tina_tasks_wait(tasks, task, &tile_governor, 0);
+	
 	tina_tasks_enqueue(GL_TASKS, &(tina_task){.func = upload_tile_task, .data = task->data}, 1, NULL);
+	
+	cleanup:
+	free(coords);
 }
 
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
