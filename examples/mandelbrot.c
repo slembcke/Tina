@@ -250,7 +250,7 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 				2*((long double)ssx/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				2*((long double)ssy/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 			});
-			sctx->coords[x] = CMPLX(p.x, p.y);
+			sctx->coords[x] = p.x + p.y*I;
 		}
 		
 		tina_tasks_wait(tasks, task, &tile_governor, 4);
