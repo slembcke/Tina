@@ -17,6 +17,18 @@
 #define TINA_TASKS_IMPLEMENTATION
 #include "../tina_tasks.h"
 
+#if defined(__unix__)
+#include <unistd.h>
+static unsigned GET_CPU_COUNT(void){return sysconf(_SC_NPROCESSORS_ONLN);}
+#elif defined(__WINNT__)
+#error TODO
+SYSTEM_INFO sysinfo;
+GetSystemInfo(&sysinfo);
+int numCPU = sysinfo.dwNumberOfProcessors;
+#else
+#error TODO Unhandled/unknown system type.
+#endif
+
 #define MAX_TASKS 1024
 tina_tasks* TASKS;
 tina_group TASKS_GOVERNOR;
@@ -411,6 +423,9 @@ static void app_init(void){
 	TASKS = tina_tasks_new(MAX_TASKS, 3, 128, 64*1024);
 	tina_tasks_queue_priority(TASKS, QUEUE_HI_PRIORITY, QUEUE_LO_PRIORITY);
 	tina_group_init(&TASKS_GOVERNOR);
+	
+	WORKER_COUNT = GET_CPU_COUNT();
+	printf("%d CPUs detected.\n", WORKER_COUNT);
 	
 	puts("Creating WORKERS.");
 	for(int i = 0; i < WORKER_COUNT; i++){
