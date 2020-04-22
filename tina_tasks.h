@@ -96,11 +96,11 @@ void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned thr
 #define _TINA_MUTEX_DESTROY(_LOCK_) mtx_destroy(&_LOCK_)
 #define _TINA_MUTEX_LOCK(_LOCK_) mtx_lock(&_LOCK_)
 #define _TINA_MUTEX_UNLOCK(_LOCK_) mtx_unlock(&_LOCK_)
-#define _TINA_SIGNAL_T cnd_t
-#define _TINA_SIGNAL_INIT(_SIG_) cnd_init(&_SIG_)
-#define _TINA_SIGNAL_DESTROY(_SIG_) cnd_destroy(&_SIG_)
-#define _TINA_SIGNAL_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
-#define _TINA_SIGNAL_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
+#define _TINA_COND_T cnd_t
+#define _TINA_COND_INIT(_SIG_) cnd_init(&_SIG_)
+#define _TINA_COND_DESTROY(_SIG_) cnd_destroy(&_SIG_)
+#define _TINA_COND_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
+#define _TINA_COND_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
 
 // TODO This probably doesn't compile as C++.
@@ -123,7 +123,7 @@ struct tina_tasks {
 	// Thread control variables.
 	bool _pause;
 	_TINA_MUTEX_T _lock;
-	_TINA_SIGNAL_T _wakeup;
+	_TINA_COND_T _wakeup;
 	
 	_tina_queue* _queues;
 	size_t _queue_count;
@@ -211,14 +211,14 @@ tina_tasks* tina_tasks_init(void* buffer, unsigned task_count, unsigned queue_co
 	
 	// Initialize the control variables.
 	_TINA_MUTEX_INIT(tasks->_lock);
-	_TINA_SIGNAL_INIT(tasks->_wakeup);
+	_TINA_COND_INIT(tasks->_wakeup);
 	
 	return tasks;
 }
 
 void tina_tasks_destroy(tina_tasks* tasks){
 	_TINA_MUTEX_DESTROY(tasks->_lock);
-	_TINA_SIGNAL_DESTROY(tasks->_wakeup);
+	_TINA_COND_DESTROY(tasks->_wakeup);
 }
 
 tina_tasks* tina_tasks_new(unsigned task_count, unsigned queue_count, unsigned coroutine_count, size_t stack_size){
@@ -300,7 +300,7 @@ void tina_tasks_run(tina_tasks* tasks, unsigned queue_idx, bool flush, void* thr
 			} else if(flush){
 				break;
 			} else {
-				_TINA_SIGNAL_WAIT(tasks->_wakeup, tasks->_lock);
+				_TINA_COND_WAIT(tasks->_wakeup, tasks->_lock);
 			}
 		}
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
@@ -309,7 +309,7 @@ void tina_tasks_run(tina_tasks* tasks, unsigned queue_idx, bool flush, void* thr
 void tina_tasks_pause(tina_tasks* tasks){
 	_TINA_MUTEX_LOCK(tasks->_lock); {
 		tasks->_pause = true;
-		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+		_TINA_COND_BROADCAST(tasks->_wakeup);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
@@ -341,7 +341,7 @@ static void _tina_tasks_enqueue_nolock(tina_tasks* tasks, const tina_task* list,
 		queue->arr[queue->head++ & queue->mask] = task;
 		queue->count++;
 	}
-	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	_TINA_COND_BROADCAST(tasks->_wakeup);
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
@@ -390,7 +390,7 @@ void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tin
 typedef struct {
 	tina_group* group;
 	unsigned threshold;
-	_TINA_SIGNAL_T wakeup;
+	_TINA_COND_T wakeup;
 } _tina_wakeup_context;
 
 static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
@@ -398,20 +398,20 @@ static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
 	tina_tasks_wait(tasks, task, ctx->group, ctx->threshold);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock); {
-		_TINA_SIGNAL_BROADCAST(ctx->wakeup);
+		_TINA_COND_BROADCAST(ctx->wakeup);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned threshold){
 	_tina_wakeup_context ctx = {.group = group, .threshold = threshold};
-	_TINA_SIGNAL_INIT(ctx.wakeup);
+	_TINA_COND_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock);_TINA_MUTEX_LOCK(tasks->_lock); {
 		_tina_tasks_enqueue_nolock(tasks, &(tina_task){.func = _tina_tasks_sleep_wakeup, .user_data = &ctx}, 1, group);
-		_TINA_SIGNAL_WAIT(ctx.wakeup, tasks->_lock);
+		_TINA_COND_WAIT(ctx.wakeup, tasks->_lock);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 	
-	_TINA_SIGNAL_DESTROY(ctx.wakeup);
+	_TINA_COND_DESTROY(ctx.wakeup);
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
