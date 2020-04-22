@@ -4,6 +4,10 @@
 #ifndef TINA_TASKS_H
 #define TINA_TASKS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct tina_tasks tina_tasks;
 typedef struct tina_task tina_task;
 typedef struct tina_group tina_group;
@@ -86,9 +90,6 @@ void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned thr
 
 #ifdef TINA_TASKS_IMPLEMENTATION
 
-// TODO associate groups with tasks?
-// TODO tina_tasks_run take a number of tasks to run maybe?
-
 // Override these. Based on C11 primitives.
 #ifndef _TINA_MUTEX_T
 #define _TINA_MUTEX_T mtx_t
@@ -102,9 +103,6 @@ void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned thr
 #define _TINA_COND_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
 #define _TINA_COND_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
-
-// TODO This probably doesn't compile as C++.
-// TODO allocate and set up queues explicitly.
 
 typedef struct {
 	void** arr;
@@ -172,41 +170,42 @@ size_t tina_tasks_size(unsigned task_count, unsigned queue_count, unsigned corou
 	return size;
 }
 
-tina_tasks* tina_tasks_init(void* buffer, unsigned task_count, unsigned queue_count, unsigned coroutine_count, size_t stack_size){
+tina_tasks* tina_tasks_init(void* _buffer, unsigned task_count, unsigned queue_count, unsigned coroutine_count, size_t stack_size){
 	_TINA_ASSERT((task_count & (task_count - 1)) == 0, "Tina Task Error: Task count must be a power of two.");
+	uint8_t* cursor = (uint8_t*)_buffer;
 	
 	// Sub allocate all of the memory for the various arrays.
-	tina_tasks* tasks = buffer;
-	buffer += sizeof(tina_tasks);
-	tasks->_queues = buffer;
-	buffer += queue_count*sizeof(_tina_queue);
-	tasks->_coro = (_tina_stack){.arr = buffer};
-	buffer += coroutine_count*sizeof(void*);
-	tasks->_pool = (_tina_stack){.arr = buffer};
-	buffer += task_count*sizeof(void*);
+	tina_tasks* tasks = (tina_tasks*)cursor;
+	cursor += sizeof(tina_tasks);
+	tasks->_queues = (_tina_queue*)cursor;
+	cursor += queue_count*sizeof(_tina_queue);
+	tasks->_coro = (_tina_stack){.arr = (void**)cursor};
+	cursor += coroutine_count*sizeof(void*);
+	tasks->_pool = (_tina_stack){.arr = (void**)cursor};
+	cursor += task_count*sizeof(void*);
 	
 	// Initialize the queues.
 	tasks->_queue_count = queue_count;
 	for(unsigned i = 0; i < queue_count; i++){
-		tasks->_queues[i] = (_tina_queue){.arr = buffer, .mask = task_count - 1};
-		buffer += task_count*sizeof(void*);
+		tasks->_queues[i] = (_tina_queue){.arr = (void**)cursor, .mask = task_count - 1};
+		cursor += task_count*sizeof(void*);
 	}
 	
 	// Initialize the coroutines and fill the pool.
 	tasks->_coro.count = coroutine_count;
 	for(unsigned i = 0; i < coroutine_count; i++){
-		tina* coro = tina_init(buffer, stack_size, _tina_tasks_worker, &tasks);
+		tina* coro = tina_init(cursor, stack_size, _tina_tasks_worker, &tasks);
 		coro->name = "TINA TASK WORKER";
 		coro->user_data = tasks;
 		tasks->_coro.arr[i] = coro;
-		buffer += stack_size;
+		cursor += stack_size;
 	}
 	
 	// Fill the task pool.
 	tasks->_pool.count = task_count;
 	for(unsigned i = 0; i < task_count; i++){
-		tasks->_pool.arr[i] = buffer;
-		buffer += sizeof(tina_task);
+		tasks->_pool.arr[i] = cursor;
+		cursor += sizeof(tina_task);
 	}
 	
 	// Initialize the control variables.
@@ -244,7 +243,7 @@ void tina_tasks_queue_priority(tina_tasks* tasks, unsigned queue_idx, unsigned f
 static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks, _tina_queue* queue){
 	if(queue->count > 0){
 		queue->count--;
-		return queue->arr[queue->tail++ & queue->mask];
+		return (tina_task*)queue->arr[queue->tail++ & queue->mask];
 	} else if(queue->fallback){
 		return _tina_tasks_next_task(tasks, queue->fallback);
 	} else {
@@ -264,7 +263,7 @@ void tina_tasks_run(tina_tasks* tasks, unsigned queue_idx, bool flush, void* thr
 			if(task){
 				_TINA_ASSERT(tasks->_coro.count > 0, "Tina Task Error: Ran out of coroutines.");
 				// Assign a coroutine and the thread data.
-				if(task->_coro == NULL) task->_coro = tasks->_coro.arr[--tasks->_coro.count];
+				if(task->_coro == NULL) task->_coro = (tina*)tasks->_coro.arr[--tasks->_coro.count];
 				task->thread_data = thread_data;
 				
 				// Yield to the task's coroutine to run it.
@@ -333,7 +332,7 @@ static void _tina_tasks_enqueue_nolock(tina_tasks* tasks, const tina_task* list,
 		_TINA_ASSERT(copy.queue_idx < tasks->_queue_count, "Tina Tasks Error: Invalid queue index.");
 		
 		// Pop a task from the pool.
-		tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
+		tina_task* task = (tina_task*)tasks->_pool.arr[--tasks->_pool.count];
 		(*task) = copy;
 		
 		// Push it to the proper queue.
@@ -391,10 +390,10 @@ typedef struct {
 	tina_group* group;
 	unsigned threshold;
 	_TINA_COND_T wakeup;
-} _tina_wakeup_context;
+} _tina_wakeup_ctx;
 
 static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
-	_tina_wakeup_context* ctx = task->user_data;
+	_tina_wakeup_ctx* ctx = (_tina_wakeup_ctx*)task->user_data;
 	tina_tasks_wait(tasks, task, ctx->group, ctx->threshold);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock); {
@@ -403,11 +402,12 @@ static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
 }
 
 void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned threshold){
-	_tina_wakeup_context ctx = {.group = group, .threshold = threshold};
+	_tina_wakeup_ctx ctx = {.group = group, .threshold = threshold};
 	_TINA_COND_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(tasks->_lock);_TINA_MUTEX_LOCK(tasks->_lock); {
-		_tina_tasks_enqueue_nolock(tasks, &(tina_task){.func = _tina_tasks_sleep_wakeup, .user_data = &ctx}, 1, group);
+		tina_task task = {.func = _tina_tasks_sleep_wakeup, .user_data = &ctx};
+		_tina_tasks_enqueue_nolock(tasks, &task, 1, group);
 		_TINA_COND_WAIT(ctx.wakeup, tasks->_lock);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 	
@@ -415,4 +415,9 @@ void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned thr
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // TINA_TASKS_H

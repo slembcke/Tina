@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Coroutine type.
 typedef struct tina tina;
 
@@ -49,7 +53,9 @@ extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
 
 #ifndef _TINA_ASSERT
-#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){puts(_MESSAGE_); abort();} }
+#include <stdlib.h>
+#include <stdio.h>
+#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stdout, _MESSAGE_"\n"); abort();} }
 #endif
 
 // Magic number to help assert for memory corruption errors.
@@ -168,9 +174,9 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  push r13");
 	asm("  push r14");
 	asm("  push r15");
-	asm("  mov ["ARG2"], rsp");
-	asm("  and "ARG3", ~0xF");
-	asm("  mov rsp, "ARG3);
+	asm("  mov [" ARG2 "], rsp");
+	asm("  and " ARG3 ", ~0xF");
+	asm("  mov rsp, " ARG3);
 	asm("  push 0");
 	asm("  jmp " TINA_SYMBOL(_tina_context));
 	
@@ -183,15 +189,15 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  push r14");
 	asm("  push r15");
 	asm("  mov rax, rsp");
-	asm("  mov rsp, ["ARG2"]");
-	asm("  mov ["ARG2"], rax");
+	asm("  mov rsp, [" ARG2 "]");
+	asm("  mov [" ARG2 "], rax");
 	asm("  pop r15");
 	asm("  pop r14");
 	asm("  pop r13");
 	asm("  pop r12");
 	asm("  pop rbx");
 	asm("  pop rbp");
-	asm("  mov "RET", "ARG1);
+	asm("  mov " RET ", " ARG1);
 	asm("  ret");
 	
 	asm(".att_syntax");
@@ -294,4 +300,9 @@ void _tina_context(tina* coro, tina_func* body){
 #endif
 
 #endif // TINA_IMPLEMENTATION
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // TINA_H
