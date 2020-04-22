@@ -273,8 +273,9 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	free(coords);
 }
 
+#define VIEW_RESET (DriftAffine){0.75, 0, 0, 0.75, 0.5, 0}
 static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
-static DriftAffine view_matrix = {0.5, 0, 0, 0.5, 0.5, 0};
+static DriftAffine view_matrix = VIEW_RESET;
 
 static DriftAffine pixel_to_world_matrix(void){
 	DriftAffine pixel_to_clip = DriftAffineOrtho(0, sapp_width(), sapp_height(), 0);
@@ -360,6 +361,10 @@ static void app_display(void){
 	sgl_defaults();
 	sgl_enable_texture();
 	
+	float pw = fmax(1, (float)w/(float)h);
+	float ph = fmax(1, (float)h/(float)w);
+	proj_matrix = DriftAffineOrtho(-pw, pw, -ph, ph);
+	
 	sgl_matrix_mode_projection();
 	sgl_load_matrix(DriftAffineToGPU(proj_matrix).m);
 	
@@ -384,7 +389,7 @@ static void app_event(const sapp_event *event){
 	switch(event->type){
 		case SAPP_EVENTTYPE_KEY_UP: {
 			if(event->key_code == SAPP_KEYCODE_ESCAPE) sapp_request_quit();
-			if(event->key_code == SAPP_KEYCODE_SPACE) view_matrix = DRIFT_AFFINE_IDENTITY;
+			if(event->key_code == SAPP_KEYCODE_SPACE) view_matrix = VIEW_RESET;
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_MOVE: {
