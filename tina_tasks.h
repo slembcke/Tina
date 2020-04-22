@@ -252,41 +252,6 @@ static inline tina_task* _tina_tasks_next_task(tina_tasks* tasks, _tina_queue* q
 	}
 }
 
-static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task, void* thread_data){
-	// Update the thread data.
-	task->thread_data = thread_data;
-	
-	switch(tina_yield(task->_coro, (uintptr_t)task)){
-		case _TINA_STATUS_ABORTED: {
-			// Worker coroutine state not reset with a clean exit. Need to do it explicitly.
-			tina_init(task->_coro, task->_coro->size, _tina_tasks_worker, tasks);
-		}; // FALLTHROUGH
-		case _TINA_STATUS_COMPLETE: {
-			// This task has completed. Return it to the pool.
-			tasks->_pool.arr[tasks->_pool.count++] = task;
-			tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
-			
-			// Did it have a group, and was it the last task being waited for?
-			tina_group* group = task->_group;
-			if(group && --group->_count == 0){
-				// Push the waiting task to the front of it's queue.
-				_tina_queue* queue = &tasks->_queues[group->_task->queue_idx];
-				queue->arr[--queue->tail & queue->mask] = group->_task;
-				queue->count++;
-			}
-		} break;
-		case _TINA_STATUS_YIELDING:{
-			// Push the task to the back of the queue.
-			_tina_queue* queue = &tasks->_queues[task->queue_idx];
-			queue->arr[queue->head++ & queue->mask] = task;
-			queue->count++;
-		} break;
-		case _TINA_STATUS_WAITING: {
-			// Do nothing. The task will be re-enqueued when it's done waiting.
-		} break;
-	}
-}
-
 void tina_tasks_run(tina_tasks* tasks, unsigned queue_idx, bool flush, void* thread_data){
 	// Task loop is only unlocked while running a task or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(tasks->_lock); {
@@ -298,9 +263,40 @@ void tina_tasks_run(tina_tasks* tasks, unsigned queue_idx, bool flush, void* thr
 			tina_task* task = _tina_tasks_next_task(tasks, queue);
 			if(task){
 				_TINA_ASSERT(tasks->_coro.count > 0, "Tina Task Error: Ran out of coroutines.");
-				// Assign a coroutine to the task and run it.
+				// Assign a coroutine and the thread data.
 				if(task->_coro == NULL) task->_coro = tasks->_coro.arr[--tasks->_coro.count];
-				_tina_tasks_execute_task(tasks, task, thread_data);
+				task->thread_data = thread_data;
+				
+				// Yield to the task's coroutine to run it.
+				switch(tina_yield(task->_coro, (uintptr_t)task)){
+					case _TINA_STATUS_ABORTED: {
+						// Worker coroutine state not reset with a clean exit. Need to do it explicitly.
+						tina_init(task->_coro, task->_coro->size, _tina_tasks_worker, tasks);
+					}; // FALLTHROUGH
+					case _TINA_STATUS_COMPLETE: {
+						// This task has completed. Return it to the pool.
+						tasks->_pool.arr[tasks->_pool.count++] = task;
+						tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
+						
+						// Did it have a group, and was it the last task being waited for?
+						tina_group* group = task->_group;
+						if(group && --group->_count == 0){
+							// Push the waiting task to the front of it's queue.
+							_tina_queue* queue = &tasks->_queues[group->_task->queue_idx];
+							queue->arr[--queue->tail & queue->mask] = group->_task;
+							queue->count++;
+						}
+					} break;
+					case _TINA_STATUS_YIELDING:{
+						// Push the task to the back of the queue.
+						_tina_queue* queue = &tasks->_queues[task->queue_idx];
+						queue->arr[queue->head++ & queue->mask] = task;
+						queue->count++;
+					} break;
+					case _TINA_STATUS_WAITING: {
+						// Do nothing. The task will be re-enqueued when it's done waiting.
+					} break;
+				}
 			} else if(flush){
 				break;
 			} else {
@@ -322,34 +318,35 @@ void tina_group_init(tina_group* group){
 	(*group) = (tina_group){._count = 1, ._magic = _TINA_MAGIC};
 }
 
-static void _tina_tasks_push_task(tina_tasks* tasks, tina_task copy){
-	_TINA_ASSERT(copy.func, "Tina Tasks Error: Task must have a body function.");
-	_TINA_ASSERT(copy.queue_idx < tasks->_queue_count, "Tina Tasks Error: Invalid queue index.");
+static void _tina_tasks_enqueue_nolock(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
+	if(group){
+		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
+		group->_count += count;
+	}
 	
-	// Pop a task from the pool.
-	tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
-	(*task) = copy;
-	
-	_tina_queue* queue = &tasks->_queues[copy.queue_idx];
-	queue->arr[queue->head++ & queue->mask] = task;
-	queue->count++;
+	_TINA_ASSERT(tasks->_pool.count >= count, "Tina Task Error: Ran out of tasks.");
+	for(size_t i = 0; i < count; i++){
+		tina_task copy = list[i];
+		copy._group = group;
+		
+		_TINA_ASSERT(copy.func, "Tina Tasks Error: Task must have a body function.");
+		_TINA_ASSERT(copy.queue_idx < tasks->_queue_count, "Tina Tasks Error: Invalid queue index.");
+		
+		// Pop a task from the pool.
+		tina_task* task = tasks->_pool.arr[--tasks->_pool.count];
+		(*task) = copy;
+		
+		// Push it to the proper queue.
+		_tina_queue* queue = &tasks->_queues[copy.queue_idx];
+		queue->arr[queue->head++ & queue->mask] = task;
+		queue->count++;
+	}
+	_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
 }
 
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group){
 	_TINA_MUTEX_LOCK(tasks->_lock); {
-		if(group){
-			_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
-			group->_count += count;
-		}
-		
-		_TINA_ASSERT(tasks->_pool.count >= count, "Tina Task Error: Ran out of tasks.");
-		for(size_t i = 0; i < count; i++){
-			tina_task copy = list[i];
-			copy._group = group;
-
-			_tina_tasks_push_task(tasks, copy);
-		}
-		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+		_tina_tasks_enqueue_nolock(tasks, list, count, group);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
@@ -409,10 +406,8 @@ void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned thr
 	_tina_wakeup_context ctx = {.group = group, .threshold = threshold};
 	_TINA_SIGNAL_INIT(ctx.wakeup);
 	
-	_TINA_MUTEX_LOCK(tasks->_lock); {
-		_TINA_ASSERT(tasks->_pool.count >= 1, "Tina Task Error: Ran out of tasks.");
-		_tina_tasks_push_task(tasks, (tina_task){.func = _tina_tasks_sleep_wakeup, .user_data = &ctx});
-		_TINA_SIGNAL_BROADCAST(tasks->_wakeup);
+	_TINA_MUTEX_LOCK(tasks->_lock);_TINA_MUTEX_LOCK(tasks->_lock); {
+		_tina_tasks_enqueue_nolock(tasks, &(tina_task){.func = _tina_tasks_sleep_wakeup, .user_data = &ctx}, 1, group);
 		_TINA_SIGNAL_WAIT(ctx.wakeup, tasks->_lock);
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 	
