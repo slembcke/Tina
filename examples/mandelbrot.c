@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <tgmath.h>
 #include <complex.h>
-#include <threads.h>
+
+#include "tinycthread.h"
 
 #define SOKOL_IMPL
 #define SOKOL_GL_IMPL
@@ -44,13 +45,13 @@ static int worker_body(void* data){
 #define TEXTURE_SIZE 256
 #define TEXTURE_CACHE_SIZE 1024
 
-typedef struct {double x, y;} DriftVec2;
-typedef struct {double a, b, c, d, x, y;} DriftAffine;
+typedef struct {long double x, y;} DriftVec2;
+typedef struct {long double a, b, c, d, x, y;} DriftAffine;
 
 static const DriftAffine DRIFT_AFFINE_ZERO = {0, 0, 0, 0, 0, 0};
 static const DriftAffine DRIFT_AFFINE_IDENTITY = {1, 0, 0, 1, 0, 0};
 
-static inline DriftAffine DriftAffineMakeTranspose(double a, double c, double x, double b, double d, double y){
+static inline DriftAffine DriftAffineMakeTranspose(long double a, long double c, long double x, long double b, long double d, long double y){
 	return (DriftAffine){a, b, c, d, x, y};
 }
 
@@ -62,18 +63,18 @@ static inline DriftAffine DriftAffineMult(DriftAffine m1, DriftAffine m2){
 }
 
 static inline DriftAffine DriftAffineInverse(DriftAffine m){
-  double inv_det = 1/(m.a*m.d - m.c*m.b);
+  long double inv_det = 1/(m.a*m.d - m.c*m.b);
   return DriftAffineMakeTranspose(
      m.d*inv_det, -m.c*inv_det, (m.c*m.y - m.d*m.x)*inv_det,
     -m.b*inv_det,  m.a*inv_det, (m.b*m.x - m.a*m.y)*inv_det
   );
 }
 
-static inline DriftAffine DriftAffineOrtho(const double l, const double r, const double b, const double t){
-	double sx = 2/(r - l);
-	double sy = 2/(t - b);
-	double tx = -(r + l)/(r - l);
-	double ty = -(t + b)/(t - b);
+static inline DriftAffine DriftAffineOrtho(const long double l, const long double r, const long double b, const long double t){
+	long double sx = 2/(r - l);
+	long double sy = 2/(t - b);
+	long double tx = -(r + l)/(r - l);
+	long double ty = -(t + b)/(t - b);
 	return DriftAffineMakeTranspose(
 		sx,  0, tx,
 		 0, sy, ty
@@ -121,13 +122,13 @@ typedef struct {
 	unsigned ymin, ymax;
 } mandelbrot_window;
 
-double hermite(double x){return x*x*(3 - 2*x);}
+long double hermite(long double x){return x*x*(3 - 2*x);}
 
-double addend_cosnorm(complex z){return creal(z/cabs(z));}
+long double addend_cosnorm(complex z){return creal(z/cabs(z));}
 
-double addend_triangle(complex z, complex c){
-	double min = fabs(cabs(z*z) - cabs(c));
-	double max = cabs(z*z) + cabs(c);
+long double addend_triangle(complex z, complex c){
+	long double min = fabs(cabs(z*z) - cabs(c));
+	long double max = cabs(z*z) + cabs(c);
 	return (cabs(z*z + c) - min)/(max - min);
 }
 
@@ -157,26 +158,26 @@ static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 }
 
 typedef struct {
-	double complex* coords;
+	long double complex* coords;
 	uint8_t* pixels;
 } render_scanline_ctx;
 
 static void render_scanline_task(tina_tasks* tasks, tina_task* task){
-	const unsigned maxi = 1*1024;
-	const double bailout = 256;
+	const unsigned maxi = 32*1024;
+	const long double bailout = 256;
 	
 	render_scanline_ctx* ctx = task->user_data;
-	const double complex* coords = ctx->coords;
+	const long double complex* coords = ctx->coords;
 	uint8_t* pixels = ctx->pixels;
 	
 	for(unsigned idx = 0; idx < TEXTURE_SIZE; idx++){
-		double r = 0, g = 0, b = 0;
-		double complex c = coords[idx];
-		double complex z = c;
-		double complex dz = 1;
+		long double r = 0, g = 0, b = 0;
+		long double complex c = coords[idx];
+		long double complex z = c;
+		long double complex dz = 1;
 		
-		// double min = INFINITY;
-		// double sum = 0;
+		// long double min = INFINITY;
+		// long double sum = 0;
 		
 		unsigned i = 0;
 		while(creal(z)*creal(z) + cimag(z)*cimag(z) <= bailout*bailout && i < maxi){
@@ -196,21 +197,24 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		}
 		
 		if(i < maxi){
-			double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
-			double n = (i - 1) + rem;
+			long double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+			long double n = (i - 1) + rem;
 			// r += 1 - exp(-1e-2*n);
-			r += 0.6 + 0.4*sin(log2(n));
+			long double phase = 5*log2(n);
+			r += 0.5 + 0.5*cos(phase + 0*M_PI/3);
+			g += 0.5 + 0.5*cos(phase + 2*M_PI/3);
+			b += 0.5 + 0.5*cos(phase + 4*M_PI/3);
 			// r += n;
 			// g += fmod(n, 1);
 			
-			// double alpha = hermite(rem);
+			// long double alpha = hermite(rem);
 			// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
 			// g = b = r;
 		}
 		
-		g = b = r;
+		// g = b = r;
 		
-		// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
+		// long double dither = ((px*193 + py*146) & 0xFF)/65536.0;
 		pixels[4*idx + 0] = 255*fmax(0, fmin(r, 1));
 		pixels[4*idx + 1] = 255*fmax(0, fmin(g, 1));
 		pixels[4*idx + 2] = 255*fmax(0, fmin(b, 1));
@@ -221,7 +225,7 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->user_data;
 	ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
-	double complex* coords = malloc(sizeof(*coords)*TEXTURE_SIZE*TEXTURE_SIZE);
+	long double complex* coords = malloc(sizeof(*coords)*TEXTURE_SIZE*TEXTURE_SIZE);
 	render_scanline_ctx* scanline_data = malloc(sizeof(*scanline_data)*TEXTURE_SIZE);
 	
 	tina_group tile_governor; tina_group_init(&tile_governor);
@@ -243,8 +247,8 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 			uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*0);
 			uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*0);
 			DriftVec2 p = DriftAffinePoint(ctx->matrix, (DriftVec2){
-				2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-				2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+				2*((long double)ssx/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+				2*((long double)ssy/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 			});
 			sctx->coords[x] = CMPLX(p.x, p.y);
 		}
@@ -273,15 +277,15 @@ static DriftAffine pixel_to_world_matrix(void){
 typedef struct {} display_task_ctx;
 static DriftVec2 mouse_pos;
 
-static DriftAffine sub_matrix(DriftAffine m, double x, double y){
+static DriftAffine sub_matrix(DriftAffine m, long double x, long double y){
 	return (DriftAffine){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
 }
 
 static bool frustum_cull(const DriftAffine mvp){
 	// Clip space center and extents.
 	DriftVec2 c = {mvp.x, mvp.y};
-	double ex = fabs(mvp.a) + fabs(mvp.c);
-	double ey = fabs(mvp.b) + fabs(mvp.d);
+	long double ex = fabs(mvp.a) + fabs(mvp.c);
+	long double ey = fabs(mvp.b) + fabs(mvp.d);
 	
 	return ((fabs(c.x) - ex < 1) && (fabs(c.y) - ey < 1));
 }
@@ -308,7 +312,7 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 	if(node->texture.id){
 		// TODO rearrange?
 		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
-		double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+		long double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 		if(scale > TEXTURE_SIZE){
 			if(!node->children) node->children = calloc(4, sizeof(*node->children));
 			
@@ -335,8 +339,6 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 }
 
 static void app_display(void){
-	_sapp_glx_make_current();
-	
 	// Run tasks to load textures.
 	tina_tasks_run(TASKS, QUEUE_GL, true, NULL);
 	TIMESTAMP++;
@@ -394,7 +396,7 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			double scale = exp(-0.5*event->scroll_y);
+			long double scale = exp(-0.5*event->scroll_y);
 			DriftVec2 mpos = DriftAffinePoint(pixel_to_world_matrix(), mouse_pos);
 			DriftAffine t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = DriftAffineMult(view_matrix, t);
