@@ -112,11 +112,9 @@ uint64_t TIMESTAMP;
 
 typedef struct tile_node tile_node;
 struct tile_node {
-	sg_image texture;
-	
-	bool requested;
-	
 	uint64_t timestamp;
+	bool requested;
+	sg_image texture;
 	tile_node* children;
 };
 
@@ -169,21 +167,22 @@ static void upload_tile_task(tina_tasks* tasks, tina_task* task){
 }
 
 typedef struct {
-	double complex* coords;
-	uint8_t* pixels;
+	double complex* restrict coords;
+	float* restrict r_samples;
+	float* restrict g_samples;
+	float* restrict b_samples;
 } render_scanline_ctx;
+
+#define SAMPLE_BATCH_COUNT 1024
 
 static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 	const unsigned maxi = 1*1024;
 	const double bailout = 256;
 	
-	render_scanline_ctx* ctx = task->user_data;
-	const double complex* coords = ctx->coords;
-	uint8_t* pixels = ctx->pixels;
-	
-	for(unsigned idx = 0; idx < TEXTURE_SIZE; idx++){
+	const render_scanline_ctx* const ctx = task->user_data;
+	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
 		double r = 0, g = 0, b = 0;
-		double complex c = coords[idx];
+		double complex c = ctx->coords[idx];
 		double complex z = c;
 		double complex dz = 1;
 		
@@ -222,35 +221,25 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		
 		g = b = r;
 		
-		// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
-		pixels[4*idx + 0] = 255*fmax(0, fmin(r, 1));
-		pixels[4*idx + 1] = 255*fmax(0, fmin(g, 1));
-		pixels[4*idx + 2] = 255*fmax(0, fmin(b, 1));
-		pixels[4*idx + 3] = 0;
+		ctx->r_samples[idx] = r;
+		ctx->g_samples[idx] = g;
+		ctx->b_samples[idx] = b;
 	}
 }
 
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->user_data;
-	ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
-	double complex* coords = malloc(sizeof(*coords)*TEXTURE_SIZE*TEXTURE_SIZE);
-	render_scanline_ctx* scanline_data = malloc(sizeof(*scanline_data)*TEXTURE_SIZE);
+	
+	render_scanline_ctx* render_contexts = malloc(sizeof(*render_contexts)*TEXTURE_SIZE);
+	double complex* coords = malloc(TEXTURE_SIZE*TEXTURE_SIZE*sizeof(*coords));
+	float* r_samples = malloc(TEXTURE_SIZE*TEXTURE_SIZE*sizeof(*r_samples));
+	float* g_samples = malloc(TEXTURE_SIZE*TEXTURE_SIZE*sizeof(*g_samples));
+	float* b_samples = malloc(TEXTURE_SIZE*TEXTURE_SIZE*sizeof(*b_samples));
 	
 	tina_group tile_governor; tina_group_init(&tile_governor);
 	
+	size_t cursor = 0, batch_cursor = 0;
 	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
-		if(ctx->node->timestamp + 16 < TIMESTAMP){
-			// Task is stale. Abort.
-			tina_tasks_wait(tasks, task, &tile_governor, 0);
-			ctx->node->requested = false;
-			free(ctx->pixels);
-			goto cleanup;
-		}
-		
-		render_scanline_ctx* sctx = scanline_data + y;
-		sctx->coords = coords + y*TEXTURE_SIZE;
-		sctx->pixels = ctx->pixels + 4*y*TEXTURE_SIZE;
-		
 		for(unsigned x = 0; x < TEXTURE_SIZE; x++){
 			uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*0);
 			uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*0);
@@ -258,19 +247,54 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 				2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 			});
-			sctx->coords[x] = CMPLX(p.x, p.y);
+			coords[cursor] = p.x + p.y*I;
+			
+			if((++cursor & (SAMPLE_BATCH_COUNT - 1)) == 0){
+				// Check if this tile is already stale and bailout.
+				if(ctx->node->timestamp + 16 < TIMESTAMP){
+					ctx->node->requested = false;
+					tina_tasks_wait(tasks, task, &tile_governor, 0);
+					goto cleanup;
+				}
+				
+				render_scanline_ctx* rctx = &render_contexts[batch_cursor/SAMPLE_BATCH_COUNT];
+				(*rctx) = (render_scanline_ctx){
+					.coords = coords + batch_cursor,
+					.r_samples = r_samples + batch_cursor,
+					.g_samples = g_samples + batch_cursor,
+					.b_samples = b_samples + batch_cursor,
+				};
+				
+				tina_tasks_wait(tasks, task, &tile_governor, 4);
+				tina_tasks_enqueue(TASKS, (tina_task[]){
+					{.func = render_scanline_task, .user_data = rctx, .queue_idx = QUEUE_LO_PRIORITY}
+				}, 1, &tile_governor);
+				
+				batch_cursor = cursor;
+			}
 		}
-		
-		tina_tasks_wait(tasks, task, &tile_governor, 4);
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = render_scanline_task, .user_data = sctx, .queue_idx = QUEUE_LO_PRIORITY}, 1, &tile_governor);
-		// render_scanline_task(TASKS, &(tina_task){.func = render_scanline_task, .data = sctx});
 	}
-	
 	tina_tasks_wait(tasks, task, &tile_governor, 0);
+	
+	// Resolve samples.
+	uint8_t* pixels = ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
+	const size_t stride = 4*TEXTURE_SIZE;
+	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
+		for(unsigned x = 0; x < TEXTURE_SIZE; x++){
+			// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
+			pixels[4*x + y*stride + 0] = 255*fmax(0, fmin(r_samples[x + y*TEXTURE_SIZE], 1));
+			pixels[4*x + y*stride + 1] = 255*fmax(0, fmin(r_samples[x + y*TEXTURE_SIZE], 1));
+			pixels[4*x + y*stride + 2] = 255*fmax(0, fmin(r_samples[x + y*TEXTURE_SIZE], 1));
+			pixels[4*x + y*stride + 3] = 0;
+		}
+	}
 	tina_tasks_enqueue(TASKS, &(tina_task){.func = upload_tile_task, .user_data = task->user_data, .queue_idx = QUEUE_GL}, 1, NULL);
 	
 	cleanup:
 	free(coords);
+	free(r_samples);
+	free(g_samples);
+	free(b_samples);
 }
 
 #define VIEW_RESET (DriftAffine){0.75, 0, 0, 0.75, 0.5, 0}
