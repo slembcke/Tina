@@ -66,12 +66,23 @@ void tina_group_init(tina_group* group);
 
 // Add tasks to the task system, optional pass the address of a tina_group to track when the tasks have completed.
 void tina_tasks_enqueue(tina_tasks* tasks, const tina_task* list, size_t count, tina_group* group);
-// Yield the current task until the group of tasks finish.
+// Yield the current task until the group has 'threshold' or less remaining tasks.
+// 'threshold' is useful to throttle a producer task. Allowing it to keep a pipeline full without overflowing it.
 void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsigned threshold);
-// Similar to pthread_join() as a convenience method. Enqueues some tasks and waits on them.
+// Yield the current task and reschedule it to run again later.
+void tina_tasks_yield_current(tina_tasks* tasks, tina_task* task);
+// Immediately abort the execution of a task and mark it as completed.
+void tina_tasks_abort_current(tina_tasks* tasks, tina_task* task);
+
+// NOTE: tina_tasks_yield_current() and tina_tasks_abort_current() must be called from within the actual task.
+// Very bad, stack corrupting things will happen if you call it from the outside.
+
+// Convenience method. Enqueue some tasks and wait for them all to finish.
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task);
 
-void tina_task_abort(tina_tasks* tasks, tina_task* task);
+// Like 'tina_tasks_wait()' but for external threads. Blocks the current thread until the threshold is satisfied.
+// Don't run this from a task! It will block the runner thread and probably cause a deadlock.
+void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned threshold);
 
 #ifdef TINA_TASKS_IMPLEMENTATION
 
@@ -124,8 +135,8 @@ struct tina_tasks {
 enum _TINA_STATUS {
 	_TINA_STATUS_COMPLETE,
 	_TINA_STATUS_WAITING,
+	_TINA_STATUS_YIELDING,
 	_TINA_STATUS_ABORTED,
-	// TODO yield to put at the back of the queue?
 };
 
 static uintptr_t _tina_tasks_worker(tina* coro, uintptr_t value){
@@ -245,25 +256,34 @@ static void _tina_tasks_execute_task(tina_tasks* tasks, tina_task* task, void* t
 	// Update the thread data.
 	task->thread_data = thread_data;
 	
-	enum _TINA_STATUS status = tina_yield(task->_coro, (uintptr_t)task);
-	if(status != _TINA_STATUS_WAITING){
-		if(status == _TINA_STATUS_ABORTED){
+	switch(tina_yield(task->_coro, (uintptr_t)task)){
+		case _TINA_STATUS_ABORTED: {
 			// Worker coroutine state not reset with a clean exit. Need to do it explicitly.
 			tina_init(task->_coro, task->_coro->size, _tina_tasks_worker, tasks);
-		}
-		
-		// This task has completed. Return it to the pool.
-		tasks->_pool.arr[tasks->_pool.count++] = task;
-		tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
-		
-		// Did it have a group, and was it the last task being waited for?
-		tina_group* group = task->_group;
-		if(group && --group->_count == 0){
-			// Push the waiting task to the front of it's queue.
-			_tina_queue* queue = &tasks->_queues[group->_task->queue_idx];
-			queue->arr[--queue->tail & queue->mask] = group->_task;
+		}; // FALLTHROUGH
+		case _TINA_STATUS_COMPLETE: {
+			// This task has completed. Return it to the pool.
+			tasks->_pool.arr[tasks->_pool.count++] = task;
+			tasks->_coro.arr[tasks->_coro.count++] = task->_coro;
+			
+			// Did it have a group, and was it the last task being waited for?
+			tina_group* group = task->_group;
+			if(group && --group->_count == 0){
+				// Push the waiting task to the front of it's queue.
+				_tina_queue* queue = &tasks->_queues[group->_task->queue_idx];
+				queue->arr[--queue->tail & queue->mask] = group->_task;
+				queue->count++;
+			}
+		} break;
+		case _TINA_STATUS_YIELDING:{
+			// Push the task to the back of the queue.
+			_tina_queue* queue = &tasks->_queues[task->queue_idx];
+			queue->arr[queue->head++ & queue->mask] = task;
 			queue->count++;
-		}
+		} break;
+		case _TINA_STATUS_WAITING: {
+			// Do nothing. The task will be re-enqueued when it's done waiting.
+		} break;
 	}
 }
 
@@ -352,6 +372,18 @@ void tina_tasks_wait(tina_tasks* tasks, tina_task* task, tina_group* group, unsi
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
+void tina_tasks_yield_current(tina_tasks* tasks, tina_task* task){
+	_TINA_MUTEX_LOCK(tasks->_lock); {
+		tina_yield(task->_coro, _TINA_STATUS_YIELDING);
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+}
+
+void tina_tasks_abort_current(tina_tasks* tasks, tina_task* task){
+	_TINA_MUTEX_LOCK(tasks->_lock); {
+		tina_yield(task->_coro, _TINA_STATUS_ABORTED);
+	} _TINA_MUTEX_UNLOCK(tasks->_lock);
+}
+
 void tina_tasks_join(tina_tasks* tasks, const tina_task* list, size_t count, tina_task* task){
 	tina_group group; tina_group_init(&group);
 	tina_tasks_enqueue(tasks, list, count, &group);
@@ -373,7 +405,7 @@ static void _tina_tasks_sleep_wakeup(tina_tasks* tasks, tina_task* task){
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
-void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group, unsigned threshold){
+void tina_tasks_wait_blocking(tina_tasks* tasks, tina_group* group, unsigned threshold){
 	_tina_wakeup_context ctx = {.group = group, .threshold = threshold};
 	_TINA_SIGNAL_INIT(ctx.wakeup);
 	
@@ -385,13 +417,6 @@ void tina_tasks_wait_sleep(tina_tasks* tasks, tina_group* group, unsigned thresh
 	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 	
 	_TINA_SIGNAL_DESTROY(ctx.wakeup);
-}
-
-void tina_task_abort(tina_tasks* tasks, tina_task* task){
-	// TODO it would be bad to allow this to be called externally.
-	_TINA_MUTEX_LOCK(tasks->_lock); {
-		tina_yield(task->_coro, _TINA_STATUS_ABORTED);
-	} _TINA_MUTEX_UNLOCK(tasks->_lock);
 }
 
 #endif // TINA_TASK_IMPLEMENTATION
