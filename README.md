@@ -2,23 +2,46 @@
 Tina is a teeny tiny, header only, coroutine library!
 
 ## Features:
-* Cross platform.
+* Super simple API. Basically just init() and yield().
 * Fast assembly language implementations.
-* Super simple API. Basically just create coroutines and swap them.
-* Minimal assembly footprint to support an ABI. (armv7 is like a dozen instructions)
-* Minimal code footprint. Currently ~200 sloc to support many common ABIs.
-* Supports GCC and Clang with inline assembly. MSVC with inline machine code.
+* Bring your own memory allocator.
+* Cross platform, supporting most common modern ABIs.
+* Minimal assembly footprint to support a new ABI. (armv7 is like a dozen instructions)
+* Supports GCC / Clang with inline assembly, and MSVC with inline machine code.
 * Supports common ABIs:
-  * Unix System V for amd64 (Unixes + maybe PS4?)
-  * Win64 (64 bit Windows + maybe Xbox?)
-  * 32 and 64 bit ARM (Linux + RPi, iOS/Android maybe Switch should work with some #ifdef changes.)
-* Planning to add support for:
-  * WASM (Need to find out if this is even possible.)
+	* SysV for amd64 (Unixes + maybe PS4)
+	* Win64 (Windows + maybe Xbox?)
+	* ARM aarch32 and aarch64 (Linux, Rasperry Pi + maybe iOS / Android / Switch?)
+* Minimal code footprint. Currently ~200 sloc to support many common ABIs.
 
-## Non-features:
+## Non-Features:
 * Definitely not production ready! (Please help me test!)
-* No intention to support for example: 32 bit Windows/Unix, MIPS, etc. Pull requests are welcome though.
+* No intention to support old or less common ABIS, for example: 32 bit Intel, MIPS, etc. Pull requests are welcome though.
+* No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds seem dumb.
 * Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like CreateFiber() or makecontext().
+* No stack overflow protection. Memory, and therefore memory protection is the user's job.
+
+# Tina Tasks
+Tina Tasks is a job system built on top of Tina.
+
+Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine (Everyone else seems to love this, and so do I. <3)
+
+## Features:
+* Simple API. Basically just init() / equeue() / wait() + convenience functions.
+* Tasks may yield to other tasks or abort before they finish. Each is run on it's own coroutine.
+* Bring your own memory allocator and threading.
+* Supports multiple queues, and you can decide when to run them and how.
+	* If you want a parallel queue for computation, run it from many worker threads.
+	* If you want a serial queue, poll it from a single thread or task.
+* Queue priorities allows implementing a simple task priority model.
+* Flexible wait primitive allows joining on all subtasks, or throttling a multiple producer / consumer system.
+* Minimal code footprint. Currently ~300 sloc, should make it easy to modify.
+
+## Non-Features:
+* Lock free: Atomics are hard...
+* Not designed for high concurrency or performance
+	* Not lock free, doesn't implement work stealing, etc.
+	* Even my Raspberry Pi 4 had over 1 million tasks/sec for throughput. So it's not bad either.
 
 ## Example:
 ```C
@@ -73,4 +96,3 @@ static void coro_error(tina* coro, const char* message){
 
 ## TODO:
 * Need some real tests.
-* Look into WASM, and see if that is possible.
