@@ -35,8 +35,10 @@ tina_group TASKS_GOVERNOR;
 
 enum {
 	QUEUE_LO_PRIORITY,
+	QUEUE_MED_PRIORITY,
 	QUEUE_HI_PRIORITY,
 	QUEUE_GL,
+	_QUEUE_COUNT,
 };
 
 typedef struct {
@@ -197,10 +199,10 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 				break;
 			}
 			
-			if(fabs(creal(-0.75 - z)) < 0.01){
-				i = maxi;
-				break;
-			}
+			// if(fabs(creal(-0.75 - z)) < 0.01){
+			// 	i = maxi;
+			// 	break;
+			// }
 			
 			// sum += addend_triangle(z, c);
 			
@@ -210,10 +212,10 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 		
 		if(i < maxi){
 			r = 1;
-			// double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
-			// double n = (i - 1) + rem;
-			// r += 1 - exp(-1e-2*n);
-			// r += 0.6 + 0.4*sin(log2(n));
+			double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+			double n = (i - 1) + rem;
+			r = 1 - exp(-1e-2*n);
+			// r = 0.6 + 0.4*sin(log2(n));
 			// r += n;
 			// g += fmod(n, 1);
 			
@@ -233,7 +235,7 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->user_data;
 	
-	const unsigned multisample_count = 4;
+	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
 	const size_t alloc_size = (0
@@ -288,7 +290,7 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 					
 					tina_tasks_wait(tasks, task, &tile_governor, 4);
 					tina_tasks_enqueue(TASKS, (tina_task[]){
-						{.func = render_scanline_task, .user_data = rctx, .queue_idx = QUEUE_LO_PRIORITY}
+						{.func = render_scanline_task, .user_data = rctx, .queue_idx = task->queue_idx}
 					}, 1, &tile_governor);
 					
 					batch_cursor++;
@@ -365,11 +367,10 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
 	
 	node->timestamp = TIMESTAMP;
+	DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
+	double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
-		// TODO rearrange?
-		DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
-		double scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 		if(scale > TEXTURE_SIZE){
 			if(!node->children) node->children = calloc(4, sizeof(*node->children));
 			
@@ -389,7 +390,8 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			.node = node,
 		};
 		
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .user_data = generate_ctx, .queue_idx = QUEUE_HI_PRIORITY}, 1, &TASKS_GOVERNOR);
+		int pri = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale) - 8, QUEUE_HI_PRIORITY));
+		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .user_data = generate_ctx, .queue_idx = pri}, 1, &TASKS_GOVERNOR);
 	}
 	
 	return false;
@@ -473,8 +475,9 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating TASKS.");
-	TASKS = tina_tasks_new(MAX_TASKS, 3, 128, 64*1024);
-	tina_tasks_queue_priority(TASKS, QUEUE_HI_PRIORITY, QUEUE_LO_PRIORITY);
+	TASKS = tina_tasks_new(MAX_TASKS, _QUEUE_COUNT, 128, 64*1024);
+	tina_tasks_queue_priority(TASKS, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
+	tina_tasks_queue_priority(TASKS, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
 	tina_group_init(&TASKS_GOVERNOR);
 	
 	WORKER_COUNT = GET_CPU_COUNT();
