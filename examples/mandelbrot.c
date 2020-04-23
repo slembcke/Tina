@@ -307,10 +307,10 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 		b += b_samples[src_idx];
 		
 		if((++src_idx & (multisample_count - 1)) == 0){
-			// double dither = ((px*193 + py*146) & 0xFF)/65536.0;
-			pixels[dst_idx++] = 255*fmax(0, fmin(r/multisample_count, 1));
-			pixels[dst_idx++] = 255*fmax(0, fmin(g/multisample_count, 1));
-			pixels[dst_idx++] = 255*fmax(0, fmin(b/multisample_count, 1));
+			float dither = ((dst_idx/4*193 + dst_idx/1024*146) & 0xFF)/65536.0;
+			pixels[dst_idx++] = 255*fmax(0, fmin(r/multisample_count + dither, 1));
+			pixels[dst_idx++] = 255*fmax(0, fmin(g/multisample_count + dither, 1));
+			pixels[dst_idx++] = 255*fmax(0, fmin(b/multisample_count + dither, 1));
 			pixels[dst_idx++] = 0;
 			r = g = b = 0;
 		}
