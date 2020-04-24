@@ -10,7 +10,7 @@ all: mandelbrot
 mandelbrot: mandelbrot.o
 	$(CC) $< -o $@ $(LDFLAGS)
 
-*.o: ../tina.h ../tina_tasks.h
+*.o: ../tina.h ../tina_jobs.h
 
 clean:
 	-rm *.o mandelbrot

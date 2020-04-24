@@ -12,15 +12,15 @@ typedef struct tina_scheduler tina_scheduler;
 typedef struct tina_job tina_job;
 typedef struct tina_group tina_group;
 
-// Task function prototype.
+// Job function prototype.
 typedef void tina_job_func(tina_job* sched, void* user_data, void** thread_data);
 
 typedef struct {
-	// Task name. (optional)
+	// Job name. (optional)
 	const char* name;
-	// Task body function.
+	// Job body function.
 	tina_job_func* func;
-	// Task context pointer. (optional)
+	// Job context pointer. (optional)
 	void* user_data;
 	// Index of the queue to run the job on.
 	uint8_t queue_idx;
@@ -176,7 +176,7 @@ size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fi
 }
 
 tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
-	_TINA_ASSERT((job_count & (job_count - 1)) == 0, "Tina Task Error: Task count must be a power of two.");
+	_TINA_ASSERT((job_count & (job_count - 1)) == 0, "Tina Jobs Error: Job count must be a power of two.");
 	uint8_t* cursor = (uint8_t*)_buffer;
 	
 	// Sub allocate all of the memory for the various arrays.
@@ -236,11 +236,11 @@ void tina_scheduler_free(tina_scheduler* sched){
 }
 
 void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx){
-	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Tasks Error: Invalid queue index.");
-	_TINA_ASSERT(fallback_idx < sched->_queue_count, "Tina Tasks Error: Invalid queue index.");
+	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
+	_TINA_ASSERT(fallback_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 	
 	_tina_queue* queue = &sched->_queues[queue_idx];
-	_TINA_ASSERT(queue->fallback == NULL, "Tina Tasks Error: Queue already has a fallback assigned.");
+	_TINA_ASSERT(queue->fallback == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
 	
 	queue->fallback = &sched->_queues[fallback_idx];
 }
@@ -257,16 +257,16 @@ static inline tina_job* _tina_scheduler_next_job(tina_scheduler* sched, _tina_qu
 }
 
 void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, void* thread_data){
-	// Task loop is only unlocked while running a job or waiting for a wakeup.
+	// Job loop is only unlocked while running a job or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = false;
 		
-		_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Task Error: Invalid queue index.");
+		_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 		_tina_queue* queue = &sched->_queues[queue_idx];
 		while(!sched->_pause){
 			tina_job* job = _tina_scheduler_next_job(sched, queue);
 			if(job){
-				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Task Error: Ran out of fibers.");
+				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 				// Assign a fiber and the thread data.
 				if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
 				job->thread_data = thread_data;
@@ -324,14 +324,14 @@ void tina_group_init(tina_group* group){
 
 static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
 	if(group){
-		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
+		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Jobs Error: Group is corrupt or uninitialized");
 		group->_count += count;
 	}
 	
-	_TINA_ASSERT(sched->_pool.count >= count, "Tina Task Error: Ran out of jobs.");
+	_TINA_ASSERT(sched->_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
 	for(size_t i = 0; i < count; i++){
-		_TINA_ASSERT(list[i].func, "Tina Tasks Error: Task must have a body function.");
-		_TINA_ASSERT(list[i].queue_idx < sched->_queue_count, "Tina Tasks Error: Invalid queue index.");
+		_TINA_ASSERT(list[i].func, "Tina Jobs Error: Job must have a body function.");
+		_TINA_ASSERT(list[i].queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 		
 		// Pop a job from the pool.
 		tina_job* job = (tina_job*)sched->_pool.arr[--sched->_pool.count];
@@ -354,7 +354,7 @@ void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_descript
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 	tina_scheduler* sched = job->scheduler;
 	_TINA_MUTEX_LOCK(sched->_lock); {
-		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Tasks Error: Group is corrupt or uninitialized");
+		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Jobs Error: Group is corrupt or uninitialized");
 		group->_job = job;
 		
 		if(--group->_count > threshold){

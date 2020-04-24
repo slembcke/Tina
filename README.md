@@ -21,27 +21,27 @@ Tina is a teeny tiny, header only, coroutine library!
 * Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like CreateFiber() or makecontext().
 * No stack overflow protection. Memory, and therefore memory protection is the user's job.
 
-# Tina Tasks
-Tina Tasks is a job system built on top of Tina.
+# Tina Jobs
+Tina Jobs is a job system built on top of Tina.
 
 Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine (Everyone else seems to love this, and so do I. <3)
 
 ## Features:
 * Simple API. Basically just init() / equeue() / wait() + convenience functions.
-* Tasks may yield to other tasks or abort before they finish. Each is run on it's own coroutine.
+* Jobss may yield to other jobs or abort before they finish. Each is run on it's own fiber backed by a tina coroutine.
 * Bring your own memory allocator and threading.
 * Supports multiple queues, and you can decide when to run them and how.
 	* If you want a parallel queue for computation, run it from many worker threads.
-	* If you want a serial queue, poll it from a single thread or task.
-* Queue priorities allows implementing a simple task priority model.
-* Flexible wait primitive allows joining on all subtasks, or throttling a multiple producer / consumer system.
+	* If you want a serial queue, poll it from a single thread or job.
+* Queue priorities allows implementing a simple job priority model.
+* Flexible wait primitive allows joining on all subjobs, or throttling a multiple producer / consumer system.
 * Minimal code footprint. Currently ~300 sloc, should make it easy to modify.
 
 ## Non-Features:
 * Lock free: Atomics are hard...
 * Not designed for high concurrency or performance
 	* Not lock free, doesn't implement work stealing, etc.
-	* Even my Raspberry Pi 4 had over 1 million tasks/sec for throughput. So it's not bad either.
+	* Even my Raspberry Pi 4 had over 1 million jobs/sec for throughput. So it's not bad either.
 
 ## Example:
 ```C

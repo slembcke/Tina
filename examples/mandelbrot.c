@@ -15,7 +15,7 @@
 #include "../tina.h"
 
 #define TINA_JOBS_IMPLEMENTATION
-#include "../tina_tasks.h"
+#include "../tina_jobs.h"
 
 #if defined(__unix__)
 #include <unistd.h>
@@ -29,9 +29,9 @@ int numCPU = sysinfo.dwNumberOfProcessors;
 #error TODO Unhandled/unknown system type.
 #endif
 
-#define MAX_TASKS 1024
+#define MAX_JOBS 1024
 tina_scheduler* SCHED;
-tina_group TASKS_GOVERNOR;
+tina_group JOB_GOVERNOR;
 
 enum {
 	QUEUE_LO_PRIORITY,
@@ -107,8 +107,6 @@ typedef struct {float m[16];} DriftGPUMatrix;
 static inline DriftGPUMatrix DriftAffineToGPU(DriftAffine m){
 	return (DriftGPUMatrix){.m = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.x, m.y, 0, 1}};
 }
-
-#define TASK_GROUP_MAX 32
 
 uint64_t TIMESTAMP;
 
@@ -380,7 +378,7 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
 			return true;
 		}
-	} else if(!node->requested && TASKS_GOVERNOR._count < MAX_WORKERS){
+	} else if(!node->requested && JOB_GOVERNOR._count < MAX_WORKERS){
 		node->requested = true;
 		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale) - 8, QUEUE_HI_PRIORITY));
 		
@@ -391,7 +389,7 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			.node = node,
 		};
 		
-		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &TASKS_GOVERNOR);
+		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_GOVERNOR);
 	}
 	
 	return false;
@@ -475,10 +473,10 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating SCHED.");
-	SCHED = tina_scheduler_new(MAX_TASKS, _QUEUE_COUNT, 128, 64*1024);
+	SCHED = tina_scheduler_new(MAX_JOBS, _QUEUE_COUNT, 128, 64*1024);
 	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
-	tina_group_init(&TASKS_GOVERNOR);
+	tina_group_init(&JOB_GOVERNOR);
 	
 	WORKER_COUNT = GET_CPU_COUNT();
 	printf("%d CPUs detected.\n", WORKER_COUNT);

@@ -1,0 +1,15 @@
+{
+	"files.associations": {
+		"*.tcc": "c",
+		"chrono": "c",
+		"complex": "c",
+		"functional": "c",
+		"string_view": "c",
+		"random": "c",
+		"istream": "c",
+		"limits": "c",
+		"bit": "c",
+		"numeric": "c",
+		"algorithm": "c"
+	}
+}
