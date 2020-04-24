@@ -1,5 +1,5 @@
 CFLAGS =  -O0 -g -Wall -Werror -Wno-unused
-CFLAGS += -Os -ffast-math
+CFLAGS += -O3 -ffast-math
 
 # Linux
 LDFLAGS = -pthread -lm -lGL -lX11 -ldl -g

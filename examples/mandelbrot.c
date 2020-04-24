@@ -176,14 +176,14 @@ typedef struct {
 	float* restrict b_samples;
 } render_scanline_ctx;
 
-#define SAMPLE_BATCH_COUNT 256
+#define SAMPLE_BATCH_COUNT 1024
 
-static void render_scanline_task(tina_tasks* tasks, tina_task* task){
+static void render_samples_task(tina_tasks* tasks, tina_task* task){
 	const unsigned maxi = 32*1024;
 	const long double bailout = 256;
 	
 	const render_scanline_ctx* const ctx = task->user_data;
-	for(unsigned idx = 0; idx < TEXTURE_SIZE; idx++){
+	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
 		long double r = 0, g = 0, b = 0;
 		long double complex c = ctx->coords[idx];
 		long double complex z = c;
@@ -236,7 +236,7 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 	generate_tile_ctx *ctx = task->user_data;
 	
-	const unsigned multisample_count = 1;
+	const unsigned multisample_count = 4;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
 	const size_t alloc_size = (0
@@ -289,9 +289,9 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 						.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 					};
 					
-					tina_tasks_wait(tasks, task, &tile_governor, WORKER_COUNT);
+					tina_tasks_wait(tasks, task, &tile_governor, 4);
 					tina_tasks_enqueue(TASKS, (tina_task[]){
-						{.func = render_scanline_task, .user_data = rctx, .queue_idx = task->queue_idx}
+						{.func = render_samples_task, .user_data = rctx, .queue_idx = task->queue_idx}
 					}, 1, &tile_governor);
 					
 					batch_cursor++;
@@ -391,7 +391,7 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 			.node = node,
 		};
 		
-		int pri = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale) - 8, QUEUE_HI_PRIORITY));
+		int pri = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/512) - 1, QUEUE_HI_PRIORITY));
 		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .user_data = generate_ctx, .queue_idx = pri}, 1, &TASKS_GOVERNOR);
 	}
 	
