@@ -25,12 +25,12 @@ struct tina {
 	const char* name;
 	// User defined error handler. (optional)
 	tina_error_handler* error_handler;
-	// Is the coroutine still running. (read only)
-	bool running;
-	// Pointer to the coroutine's memory buffer.
+	// Pointer to the coroutine's memory buffer. (readonly)
 	void* buffer;
-	// Size of the buffer.
+	// Size of the buffer. (readonly)
 	size_t size;
+	// Has the coroutine's function exited? (readonly)
+	bool completed;
 	
 	// Private implementation details.
 	void* _sp;
@@ -61,13 +61,18 @@ extern const uint64_t _tina_init_stack[];
 // Magic number to help assert for memory corruption errors.
 #define _TINA_MAGIC 0x54494E41u
 
-// Yield execution to a coroutine.
+// Yield execution into (or out of) a coroutine.
+// NOTE: The implementation is simplistic and just swaps a continuation stored in the coroutine.
+// In other words: Coroutines can yield to other coroutines, but don't yield into a coroutine that hasn't yielded back to it's caller yet.
+// Treat them as reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
 static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
 	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
 	
 	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
 	swap_func* swap = ((swap_func*)(void*)_tina_swap);
-	return swap(coro, value, &coro->_sp);
+	// TODO swap no longer needs the coro pointer.
+	// Could save a couple instructions? Meh. Too much testing effort.
+	return swap(NULL, value, &coro->_sp);
 }
 
 #ifdef TINA_IMPLEMENTATION
@@ -75,7 +80,7 @@ static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
-	coro->running = true;
+	coro->completed = false;
 	coro->buffer = buffer;
 	coro->size = size;
 	coro->_magic = _TINA_MAGIC;
@@ -98,12 +103,12 @@ void _tina_context(tina* coro, tina_func* body){
 	uintptr_t value = tina_yield(coro, (uintptr_t)coro);
 	// Call the body function with the first value.
 	value = body(coro, value);
-	// body() has exited, and the coroutine is finished.
-	coro->running = false;
+	// body() has exited, and the coroutine is completed.
+	coro->completed = true;
 	// Yield the final return value back to the calling thread.
 	tina_yield(coro, value);
 	
-	// Any attempt to resume the coroutine after it's finished should call the error func.
+	// Any attempt to resume the coroutine after it's completed should call the error func.
 	while(true){
 		if(coro->error_handler) coro->error_handler(coro, "Attempted to resume a dead coroutine.");
 		tina_yield(coro, 0);

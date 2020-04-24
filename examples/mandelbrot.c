@@ -14,7 +14,7 @@
 #define TINA_IMPLEMENTATION
 #include "../tina.h"
 
-#define TINA_TASKS_IMPLEMENTATION
+#define TINA_JOBS_IMPLEMENTATION
 #include "../tina_tasks.h"
 
 #if defined(__unix__)
@@ -30,7 +30,7 @@ int numCPU = sysinfo.dwNumberOfProcessors;
 #endif
 
 #define MAX_TASKS 1024
-tina_tasks* TASKS;
+tina_scheduler* SCHED;
 tina_group TASKS_GOVERNOR;
 
 enum {
@@ -51,7 +51,7 @@ worker_context WORKERS[MAX_WORKERS];
 
 static int worker_body(void* data){
 	worker_context* ctx = data;
-	tina_tasks_run(TASKS, QUEUE_HI_PRIORITY, false, ctx);
+	tina_scheduler_run(SCHED, QUEUE_HI_PRIORITY, false, ctx);
 	return 0;
 }
 
@@ -123,6 +123,7 @@ struct tile_node {
 static tile_node TREE_ROOT;
 
 typedef struct {
+	unsigned queue_idx;
 	void* pixels;
 	DriftAffine matrix;
 	tile_node* node;
@@ -147,8 +148,8 @@ size_t TEXTURE_CURSOR;
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
 
-static void upload_tile_task(tina_tasks* tasks, tina_task* task){
-	generate_tile_ctx *ctx = task->user_data;
+static void upload_tile_job(tina_job* job, void* user_data, void** thread_data){
+	generate_tile_ctx *ctx = user_data;
 	tile_node* node = ctx->node;
 	
 	size_t cursor = TEXTURE_CURSOR;
@@ -177,11 +178,11 @@ typedef struct {
 
 #define SAMPLE_BATCH_COUNT 256
 
-static void render_scanline_task(tina_tasks* tasks, tina_task* task){
+static void render_samples_job(tina_job* job, void* user_data, void** thread_data){
 	const unsigned maxi = 32*1024;
 	const double bailout = 256;
 	
-	const render_scanline_ctx* const ctx = task->user_data;
+	const render_scanline_ctx* const ctx = user_data;
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
 		double r = 0, g = 0, b = 0;
 		double complex c = ctx->coords[idx];
@@ -232,8 +233,8 @@ static void render_scanline_task(tina_tasks* tasks, tina_task* task){
 	}
 }
 
-static void generate_tile_task(tina_tasks* tasks, tina_task* task){
-	generate_tile_ctx *ctx = task->user_data;
+static void generate_tile_job(tina_job* job, void* user_data, void** thread_data){
+	generate_tile_ctx *ctx = user_data;
 	
 	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
@@ -276,7 +277,7 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 					// Check if this tile is already stale and bailout.
 					if(ctx->node->timestamp + 16 < TIMESTAMP){
 						ctx->node->requested = false;
-						tina_tasks_wait(tasks, task, &tile_governor, 0);
+						tina_job_wait(job, &tile_governor, 0);
 						goto cleanup;
 					}
 					
@@ -288,17 +289,15 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 						.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 					};
 					
-					tina_tasks_wait(tasks, task, &tile_governor, 4);
-					tina_tasks_enqueue(TASKS, (tina_task[]){
-						{.func = render_scanline_task, .user_data = rctx, .queue_idx = task->queue_idx}
-					}, 1, &tile_governor);
+					tina_job_wait(job, &tile_governor, 4);
+					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, ctx->queue_idx, &tile_governor);
 					
 					batch_cursor++;
 				}
 			}
 		}
 	}
-	tina_tasks_wait(tasks, task, &tile_governor, 0);
+	tina_job_wait(job, &tile_governor, 0);
 	
 	// Resolve samples.
 	uint8_t* pixels = ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
@@ -317,7 +316,7 @@ static void generate_tile_task(tina_tasks* tasks, tina_task* task){
 			r = g = b = 0;
 		}
 	}
-	tina_tasks_enqueue(TASKS, &(tina_task){.func = upload_tile_task, .user_data = task->user_data, .queue_idx = QUEUE_GL}, 1, NULL);
+	tina_scheduler_enqueue(SCHED, "UploadTiles", upload_tile_job, user_data, QUEUE_GL, NULL);
 	
 	cleanup:
 	free(buffer);
@@ -333,7 +332,7 @@ static DriftAffine pixel_to_world_matrix(void){
 	return DriftAffineMult(vp_inv_matrix, pixel_to_clip);
 }
 
-typedef struct {} display_task_ctx;
+typedef struct {} display_job_ctx;
 static DriftVec2 mouse_pos;
 
 static DriftAffine sub_matrix(DriftAffine m, double x, double y){
@@ -383,15 +382,16 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 		}
 	} else if(!node->requested && TASKS_GOVERNOR._count < MAX_WORKERS){
 		node->requested = true;
+		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale) - 8, QUEUE_HI_PRIORITY));
 		
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
 		(*generate_ctx) = (generate_tile_ctx){
+			.queue_idx = queue_idx,
 			.matrix = matrix,
 			.node = node,
 		};
 		
-		int pri = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale) - 8, QUEUE_HI_PRIORITY));
-		tina_tasks_enqueue(TASKS, &(tina_task){.func = generate_tile_task, .user_data = generate_ctx, .queue_idx = pri}, 1, &TASKS_GOVERNOR);
+		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &TASKS_GOVERNOR);
 	}
 	
 	return false;
@@ -400,8 +400,8 @@ static bool visit_tile(tile_node* node, DriftAffine matrix){
 static void app_display(void){
 	_sapp_glx_make_current();
 	
-	// Run tasks to load textures.
-	tina_tasks_run(TASKS, QUEUE_GL, true, NULL);
+	// Run jobs to load textures.
+	tina_scheduler_run(SCHED, QUEUE_GL, true, NULL);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
@@ -474,10 +474,10 @@ static void app_event(const sapp_event *event){
 static void app_init(void){
 	puts("Sokol-App init.");
 	
-	puts("Creating TASKS.");
-	TASKS = tina_tasks_new(MAX_TASKS, _QUEUE_COUNT, 128, 64*1024);
-	tina_tasks_queue_priority(TASKS, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
-	tina_tasks_queue_priority(TASKS, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
+	puts("Creating SCHED.");
+	SCHED = tina_scheduler_new(MAX_TASKS, _QUEUE_COUNT, 128, 64*1024);
+	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
+	tina_scheduler_queue_priority(SCHED, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
 	tina_group_init(&TASKS_GOVERNOR);
 	
 	WORKER_COUNT = GET_CPU_COUNT();
@@ -516,16 +516,16 @@ static void app_init(void){
 
 static void app_cleanup(void){
 	puts("Sokol-App cleanup.");
-	// tina_tasks_wait_sleep(TASKS, &group, 0);
+	// tina_job_wait_sleep(SCHED, &group, 0);
 	
 	puts("WORKERS shutdown.");
 	TIMESTAMP += 1000;
-	tina_tasks_pause(TASKS);
+	tina_scheduler_pause(SCHED);
 	for(int i = 0; i < WORKER_COUNT; i++) thrd_join(WORKERS[i].thread, NULL);
 	
-	puts ("Destroing TASKS");
-	tina_tasks_destroy(TASKS);
-	free(TASKS);
+	puts ("Destroing SCHED");
+	tina_scheduler_destroy(SCHED);
+	free(SCHED);
 	
 	puts("Sokol-GFX shutdown.");
 	// sg_shutdown();
