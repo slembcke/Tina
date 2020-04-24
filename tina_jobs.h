@@ -13,7 +13,7 @@ typedef struct tina_job tina_job;
 typedef struct tina_group tina_group;
 
 // Job function prototype.
-typedef void tina_job_func(tina_job* sched, void* user_data, void** thread_data);
+typedef void tina_job_func(tina_job* job, void* user_data, void** thread_data);
 
 typedef struct {
 	// Job name. (optional)
@@ -64,11 +64,13 @@ void tina_group_init(tina_group* group);
 void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
-void tina_job_wait(tina_job* sched, tina_group* group, unsigned threshold);
+void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
 // Yield the current job and reschedule it to run again later.
-void tina_job_yield(tina_job* sched);
+void tina_job_yield(tina_job* job);
+// Yield the current job and reschedule it to run on a different queue.
+void tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
-void tina_job_abort(tina_job* sched);
+void tina_job_abort(tina_job* job);
 
 // NOTE: tina_job_yield() and tina_job_abort() must be called from within the actual job.
 // Very bad, stack corrupting things will happen if you call it from the outside.
@@ -374,6 +376,14 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 void tina_job_yield(tina_job* job){
 	tina_scheduler* sched = job->scheduler;
 	_TINA_MUTEX_LOCK(sched->_lock); {
+		tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	} _TINA_MUTEX_UNLOCK(sched->_lock);
+}
+
+void tina_job_switch_queue(tina_job* job, unsigned queue_idx){
+	tina_scheduler* sched = job->scheduler;
+	_TINA_MUTEX_LOCK(sched->_lock); {
+		job->desc.queue_idx = queue_idx;
 		tina_yield(job->fiber, _TINA_STATUS_YIELDING);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }

@@ -123,7 +123,6 @@ static tile_node TREE_ROOT;
 
 typedef struct {
 	unsigned queue_idx;
-	void* pixels;
 	DriftAffine matrix;
 	tile_node* node;
 } generate_tile_ctx;
@@ -146,27 +145,6 @@ long double addend_triangle(complex z, complex c){
 size_t TEXTURE_CURSOR;
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
-
-static void upload_tile_job(tina_job* job, void* user_data, void** thread_data){
-	generate_tile_ctx *ctx = user_data;
-	tile_node* node = ctx->node;
-	
-	size_t cursor = TEXTURE_CURSOR;
-	while(TEXTURE_NODE[cursor] && TEXTURE_NODE[cursor]->timestamp == TIMESTAMP){
-		cursor = (cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
-	}
-	TEXTURE_CURSOR = (cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
-	
-	if(TEXTURE_NODE[cursor]) TEXTURE_NODE[cursor]->texture.id = 0;
-	
-	TEXTURE_NODE[cursor] = node;
-	node->texture = TEXTURE_CACHE[cursor];
-	sg_update_image(node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = ctx->pixels}});
-	node->requested = false;
-	
-	free(ctx->pixels);
-	free(ctx);
-}
 
 typedef struct {
 	long double complex* restrict coords;
@@ -299,7 +277,7 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 	tina_job_wait(job, &tile_governor, 0);
 	
 	// Resolve samples.
-	uint8_t* pixels = ctx->pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
+	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
 	float r = 0, g = 0, b = 0;
 	for(size_t src_idx = 0, dst_idx = 0; src_idx < sample_count;){
 		r += r_samples[src_idx];
@@ -315,9 +293,24 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 			r = g = b = 0;
 		}
 	}
-	tina_scheduler_enqueue(SCHED, "UploadTiles", upload_tile_job, user_data, QUEUE_GL, NULL);
+	
+	tina_job_switch_queue(job, QUEUE_GL);
+	size_t texture_cursor = TEXTURE_CURSOR;
+	while(TEXTURE_NODE[texture_cursor] && TEXTURE_NODE[texture_cursor]->timestamp == TIMESTAMP){
+		texture_cursor = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	}
+	TEXTURE_CURSOR = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	
+	if(TEXTURE_NODE[texture_cursor]) TEXTURE_NODE[texture_cursor]->texture.id = 0;
+	
+	TEXTURE_NODE[texture_cursor] = ctx->node;
+	ctx->node->texture = TEXTURE_CACHE[texture_cursor];
+	sg_update_image(ctx->node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
+	ctx->node->requested = false;
+	free(pixels);
 	
 	cleanup:
+	free(ctx);
 	free(buffer);
 }
 
