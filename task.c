@@ -7,23 +7,23 @@
 #define TINA_IMPLEMENTATION
 #include "tina.h"
 
-#define TINA_TASKS_IMPLEMENTATION
-#include "tina_tasks.h"
+#define TINA_JOBS_IMPLEMENTATION
+#include "tina_jobs.h"
 
-tina_tasks* TASKS;
+tina_scheduler* TASKS;
 atomic_uint COUNT;
 
-static void TaskGeneric(tina_tasks* tasks, tina_task* task){
+static void TaskGeneric(tina_job* task, void* user_data, void** thread_data){
 	// printf("%s\n", task->name);
 	// thrd_sleep(&(struct timespec){.tv_nsec = 10}, NULL);
 	thrd_yield();
 	atomic_fetch_add(&COUNT, 1);
 }
 
-static void TaskA(tina_tasks* tasks, tina_task* task){
+static void TaskA(tina_job* task, void* user_data, void** thread_data){
 	// printf("%s\n", task->name);
 	
-	tina_tasks_join(TASKS, (tina_task[]){
+	tina_scheduler_join(TASKS, (tina_job_description[]){
 		{.func = TaskGeneric, .name = "Task1"},
 		{.func = TaskGeneric, .name = "Task2"},
 		{.func = TaskGeneric, .name = "Task3"},
@@ -41,25 +41,23 @@ static void TaskA(tina_tasks* tasks, tina_task* task){
 		{.func = TaskGeneric, .name = "TaskF"},
 	}, 16 - 1, task);
 	
-	unsigned* countdown = task->user_data;
+	unsigned* countdown = user_data;
 	if(--*countdown){
-		tina_tasks_enqueue(TASKS, (tina_task[]){
-			{.name = "Task0", .func = TaskA, .user_data = countdown}
-		}, 1, NULL);
+		tina_scheduler_enqueue(TASKS, "Task0", TaskA, countdown, 0, NULL);
 	}
 	
 	atomic_fetch_add(&COUNT, 1);
 }
 
 static int worker_thread(void* tasks){
-	tina_tasks_run(tasks, 0, false, NULL);
+	tina_scheduler_run(tasks, 0, false, NULL);
 	return 0;
 }
 
 int main(int argc, const char *argv[]){
 	atomic_init(&COUNT, 0);
 	
-	TASKS = tina_tasks_new(1024, 1, 64, 64*1024);
+	TASKS = tina_scheduler_new(1024, 1, 64, 64*1024);
 	
 	int worker_count = 4;
 	thrd_t workers[16];
@@ -69,15 +67,13 @@ int main(int argc, const char *argv[]){
 	unsigned repeat_group[parallel];
 	for(int i = 0; i < parallel; i++){
 		repeat_group[i] = 128000;
-		tina_tasks_enqueue(TASKS, (tina_task[]){
-			{.name = "Task0", .func = TaskA, .user_data = repeat_group + i},
-		}, 1, NULL);
+		tina_scheduler_enqueue(TASKS, "Task0", TaskA, repeat_group + i, 0, NULL);
 	}
 	
 	puts("waiting");
 	thrd_sleep(&(struct timespec){.tv_sec = 1}, NULL);
 	
-	tina_tasks_pause(TASKS);
+	tina_scheduler_pause(TASKS);
 	for(int i = 0; i < worker_count; i++) thrd_join(workers[i], NULL);
 	
 	printf("exiting with count: %dK\n", COUNT/1000);

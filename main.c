@@ -17,7 +17,7 @@ int main(int argc, const char *argv[]){
 	
 	// Call tina_yield() to switch coroutines.
 	// You can optionally pass a value through to the coroutine as well.
-	while(coro->running) tina_yield(coro, 0);
+	while(!coro->completed) tina_yield(coro, 0);
 	
 	printf("Resuming again will call coro_error()\n");
 	tina_yield(coro, 0);
