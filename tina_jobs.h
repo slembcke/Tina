@@ -8,11 +8,17 @@
 extern "C" {
 #endif
 
+// Opaque type for a scheduler.
 typedef struct tina_scheduler tina_scheduler;
+// Opaque type for a job.
 typedef struct tina_job tina_job;
+// Opaque type for a job group.
 typedef struct tina_group tina_group;
 
 // Job function prototype.
+// 'job' is a reference to the job to use with the yield/switch/abort functions.
+// 'user_data' is the pointer you supplied when creating the job.
+// 'thread_data' is a handle for the pointer passed to the tina_scheduler_run() call that is processing this job.
 typedef void tina_job_func(tina_job* job, void* user_data, void** thread_data);
 
 typedef struct {
@@ -90,6 +96,7 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 #ifdef TINA_JOBS_IMPLEMENTATION
 
 // Override these. Based on C11 primitives.
+// Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
 #ifndef _TINA_MUTEX_T
 #define _TINA_MUTEX_T mtx_t
 #define _TINA_MUTEX_INIT(_LOCK_) mtx_init(&_LOCK_, mtx_plain)
