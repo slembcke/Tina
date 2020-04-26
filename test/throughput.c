@@ -4,25 +4,17 @@
 #include <threads.h>
 #include <assert.h>
 
-#define TINA_IMPLEMENTATION
-#include "../tina.h"
-
-#define TINA_JOBS_IMPLEMENTATION
-#include "../tina_jobs.h"
+#include "tina.h"
+#include "tina_jobs.h"
 
 tina_scheduler* TASKS;
 atomic_uint COUNT;
 
 static void TaskGeneric(tina_job* task, void* user_data, void** thread_data){
-	// printf("%s\n", task->name);
-	// thrd_sleep(&(struct timespec){.tv_nsec = 10}, NULL);
-	// thrd_yield();
 	atomic_fetch_add(&COUNT, 1);
 }
 
 static void TaskA(tina_job* task, void* user_data, void** thread_data){
-	// printf("%s\n", task->name);
-	
 	tina_scheduler_join(TASKS, (tina_job_description[]){
 		{.func = TaskGeneric, .name = "Task1"},
 		{.func = TaskGeneric, .name = "Task2"},
@@ -59,13 +51,13 @@ int main(int argc, const char *argv[]){
 	
 	TASKS = tina_scheduler_new(1024, 1, 64, 64*1024);
 	
-	int worker_count = 4;
+	unsigned worker_count = 4;
 	thrd_t workers[16];
-	for(int i = 0; i < worker_count; i++) thrd_create(&workers[i], worker_thread, TASKS);
+	for(unsigned i = 0; i < worker_count; i++) thrd_create(&workers[i], worker_thread, TASKS);
 	
 	unsigned parallel = 16;
 	unsigned repeat_group[parallel];
-	for(int i = 0; i < parallel; i++){
+	for(unsigned i = 0; i < parallel; i++){
 		repeat_group[i] = 128000;
 		tina_scheduler_enqueue(TASKS, "Task0", TaskA, repeat_group + i, 0, NULL);
 	}
@@ -74,7 +66,7 @@ int main(int argc, const char *argv[]){
 	thrd_sleep(&(struct timespec){.tv_sec = 1}, NULL);
 	
 	tina_scheduler_pause(TASKS);
-	for(int i = 0; i < worker_count; i++) thrd_join(workers[i], NULL);
+	for(unsigned i = 0; i < worker_count; i++) thrd_join(workers[i], NULL);
 	
 	printf("exiting with count: %dK\n", COUNT/1000);
 	return EXIT_SUCCESS;

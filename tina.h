@@ -168,6 +168,7 @@ void _tina_context(tina* coro, tina_func* body){
 	
 	// https://static.docs.arm.com/ihi0042/g/aapcs32.pdf
 	// _tina_swap() is responsible for swapping out the registers and stack pointer.
+	asm(".global _tina_swap");
 	asm("_tina_swap:");
 	// Like above, save the ABI protected registers and save the stack pointer.
 	asm("  push {r4-r11, lr}");
@@ -208,6 +209,7 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  jmp " TINA_SYMBOL(_tina_context));
 	
 	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
+	asm(".global " TINA_SYMBOL(_tina_swap));
 	asm(TINA_SYMBOL(_tina_swap:));
 	asm("  push rbp");
 	asm("  push rbx");
@@ -295,6 +297,7 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  mov lr, #0");
 	asm("  b _tina_context");
 
+	asm(".global " TINA_SYMBOL(_tina_swap));
 	asm(TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
 	asm("  stp x19, x20, [sp, 0x00]");

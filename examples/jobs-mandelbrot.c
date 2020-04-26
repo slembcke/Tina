@@ -1,34 +1,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <tgmath.h>
-#include <complex.h>
 
-#include "libs/tinycthread.h"
+#include "common/common.h"
 
 #define SOKOL_IMPL
 #define SOKOL_GL_IMPL
 #define SOKOL_GLCORE33
-#include "libs/sokol_app.h"
-#include "libs/sokol_gfx.h"
-#include "libs/sokol_gl.h"
+#include "common/libs/sokol_app.h"
+#include "common/libs/sokol_gfx.h"
+#include "common/libs/sokol_gl.h"
 
-#define TINA_IMPLEMENTATION
-#include "../tina.h"
-
-#define TINA_JOBS_IMPLEMENTATION
-#include "../tina_jobs.h"
-
-#if defined(__unix__)
-#include <unistd.h>
-static unsigned GET_CPU_COUNT(void){return sysconf(_SC_NPROCESSORS_ONLN);}
-#elif defined(__WINNT__)
-#error TODO
-SYSTEM_INFO sysinfo;
-GetSystemInfo(&sysinfo);
-int numCPU = sysinfo.dwNumberOfProcessors;
-#else
-#error TODO Unhandled/unknown system type.
-#endif
+#include "tina_jobs.h"
 
 #define MAX_JOBS 1024
 tina_scheduler* SCHED;
@@ -41,20 +24,6 @@ enum {
 	QUEUE_GL,
 	_QUEUE_COUNT,
 };
-
-typedef struct {
-	thrd_t thread;
-} worker_context;
-
-#define MAX_WORKERS 64
-static unsigned WORKER_COUNT = MAX_WORKERS;
-worker_context WORKERS[MAX_WORKERS];
-
-static int worker_body(void* data){
-	worker_context* ctx = data;
-	tina_scheduler_run(SCHED, QUEUE_HI_PRIORITY, false, ctx);
-	return 0;
-}
 
 #define TEXTURE_SIZE 256
 #define TEXTURE_CACHE_SIZE 1024
@@ -155,9 +124,9 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 		long double complex dz = 1;
 		
 		unsigned i = 0;
-		while(cabs(z) <= bailout && i < maxi){
+		while(fabs(z) <= bailout && i < maxi){
 			dz *= 2*z;
-			if(cabs(dz) < 0x1p-16){
+			if(fabs(dz) < 0x1p-16){
 				i = maxi;
 				break;
 			}
@@ -170,7 +139,7 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 			ctx->g_samples[idx] = 0;
 			ctx->b_samples[idx] = 0;
 		} else {
-			long double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
+			long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
 			long double n = (i - 1) + rem;
 			
 			long double phase = 5*log2(n);
@@ -343,7 +312,7 @@ static bool visit_tile(tile_node* node, Transform matrix){
 			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
 			return true;
 		}
-	} else if(!node->requested && JOB_GOVERNOR._count < MAX_WORKERS){
+	} else if(!node->requested && JOB_GOVERNOR._count < 16){
 		node->requested = true;
 		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/512) - 1, QUEUE_HI_PRIORITY));
 		
@@ -441,15 +410,7 @@ static void app_init(void){
 	tina_scheduler_queue_priority(SCHED, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
 	tina_group_init(&JOB_GOVERNOR);
 	
-	WORKER_COUNT = GET_CPU_COUNT();
-	printf("%d CPUs detected.\n", WORKER_COUNT);
-	
-	puts("Creating WORKERS.");
-	for(int i = 0; i < WORKER_COUNT; i++){
-		worker_context* worker = WORKERS + i;
-		(*worker) = (worker_context){};
-		thrd_create(&worker->thread, worker_body, worker);
-	}
+	common_start_worker_threads(SCHED, QUEUE_HI_PRIORITY);
 	
 	puts("Init Sokol-GFX.");
 	sg_desc gfx_desc = {.image_pool_size = TEXTURE_CACHE_SIZE + 1};
@@ -482,7 +443,7 @@ static void app_cleanup(void){
 	puts("WORKERS shutdown.");
 	TIMESTAMP += 1000;
 	tina_scheduler_pause(SCHED);
-	for(int i = 0; i < WORKER_COUNT; i++) thrd_join(WORKERS[i].thread, NULL);
+	common_destroy_worker_threads();
 	
 	puts ("Destroing SCHED");
 	tina_scheduler_destroy(SCHED);

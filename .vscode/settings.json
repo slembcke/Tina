@@ -10,6 +10,8 @@
 		"limits": "c",
 		"bit": "c",
 		"numeric": "c",
-		"algorithm": "c"
+		"algorithm": "c",
+		"tgmath.h": "c",
+		"tina.h": "c"
 	}
 }

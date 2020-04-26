@@ -1,0 +1,27 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Make all",
+			"command": "/usr/bin/make",
+			"args": ["all"],
+			"problemMatcher": ["$gcc"],
+			"group": "build",
+		}, {
+			"type": "shell",
+			"label": "Make clean",
+			"command": "/usr/bin/make",
+			"args": ["clean"],
+			"problemMatcher": [],
+			"group": "build",
+		}, {
+			"type": "shell",
+			"label": "Compile file.",
+			"command": "/usr/bin/gcc",
+			"args": ["-g", "-c", "${file}"],
+			"problemMatcher": ["$gcc"],
+			"group": "build",
+		},
+	]
+}

@@ -22,6 +22,7 @@ SOFTWARE.
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #ifndef TINA_JOBS_H
 #define TINA_JOBS_H
