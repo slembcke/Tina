@@ -1,3 +1,5 @@
+// NOTE: This is an interative Mandelbrot fractal explorer built on top of Sokol.
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <tgmath.h>
@@ -13,20 +15,21 @@
 
 #include "tina_jobs.h"
 
-#define MAX_JOBS 1024
 tina_scheduler* SCHED;
-tina_group JOB_GOVERNOR;
+// We'll use this to throttle how quickly we add new rendering tasks to the system.
+tina_group JOB_THROTTLE;
 
 enum {
+	// Used as concurrent priority queues for rendering tiles.
 	QUEUE_LO_PRIORITY,
 	QUEUE_MED_PRIORITY,
 	QUEUE_HI_PRIORITY,
-	QUEUE_GL,
+	// A serial queue used to upload new textures.
+	QUEUE_GFX,
 	_QUEUE_COUNT,
 };
 
-#define TEXTURE_SIZE 256
-#define TEXTURE_CACHE_SIZE 1024
+// A bunch of random 2D affine matrix code I pulled from another project.
 
 typedef struct {long double x, y;} Vec2;
 typedef struct {long double a, b, c, d, x, y;} Transform;
@@ -77,42 +80,61 @@ static inline GLMatrix TransformToGL(Transform m){
 	return (GLMatrix){.m = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.x, m.y, 0, 1}};
 }
 
+// Current frame timestamp used to kill off tile requests that go offscreen before they finish.
 uint64_t TIMESTAMP;
 
+// Image tiles are arranged into a quadtree.
 typedef struct tile_node tile_node;
 struct tile_node {
+	// Last frame this tile was visible.
 	uint64_t timestamp;
+	// Has the tile already been requested.
 	bool requested;
+	// Texture for this tile.
 	sg_image texture;
 	tile_node* children;
 };
 
+// Root node of the quadtree.
 static tile_node TREE_ROOT;
 
-typedef struct {
-	unsigned queue_idx;
-	Transform matrix;
-	tile_node* node;
-} generate_tile_ctx;
+// Texture and cache variables.
 
-typedef struct {
-	unsigned xmin, xmax;
-	unsigned ymin, ymax;
-} mandelbrot_window;
+#define TEXTURE_SIZE 256
+#define TEXTURE_CACHE_SIZE 1024
 
+// Implements a simple FIFO texture cache.
+
+// Current cache index to replace next. (If it's not currently visible)
 size_t TEXTURE_CURSOR;
+// Node that owns a cache index.
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
 
+// Context for the task to render new image tiles.
 typedef struct {
+	// Which queue (priority) this request belongs to.
+	unsigned queue_idx;
+	// Model matrix for the tile used to calculate sample coordinates.
+	Transform matrix;
+	// The node the request will be assigned to.
+	tile_node* node;
+} generate_tile_ctx;
+
+// Context for the task to render sample batches.
+typedef struct {
+	// Coordinates to be sampled.
 	long double complex* restrict coords;
+	// RGB output values.
 	float* restrict r_samples;
 	float* restrict g_samples;
 	float* restrict b_samples;
 } render_scanline_ctx;
 
-#define SAMPLE_BATCH_COUNT 1024
+// How many samples to run in a batch.
+#define SAMPLE_BATCH_COUNT 256
 
+// Task function that renders mandelbrot samples.
 static void render_samples_job(tina_job* job, void* user_data, void** thread_data){
 	const unsigned maxi = 32*1024;
 	const long double bailout = 256;
@@ -123,6 +145,7 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 		long double complex z = c;
 		long double complex dz = 1;
 		
+		// Iterate until the fractal function diverges.
 		unsigned i = 0;
 		while(fabs(z) <= bailout && i < maxi){
 			dz *= 2*z;
@@ -130,10 +153,12 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 				i = maxi;
 				break;
 			}
+			
 			z = z*z + c;
 			i++;
 		}
 		
+		// Color the pixel based on if it diverged and how.
 		if(i == maxi){
 			ctx->r_samples[idx] = 0;
 			ctx->g_samples[idx] = 0;
@@ -150,51 +175,47 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 	}
 }
 
+// Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job, void* user_data, void** thread_data){
 	generate_tile_ctx *ctx = user_data;
 	
 	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
-	const size_t alloc_size = (0
-		+ batch_count*sizeof(render_scanline_ctx)
-		+ sample_count*sizeof(long double complex)
-		+ 3*sample_count*sizeof(float)
-	);
+
+	// Allocate memory for the sample coords and output values.
+	// You'd probably want to batch allocate these if this was a real thing.
+	render_scanline_ctx* render_contexts = malloc(batch_count*sizeof(render_scanline_ctx));
+	long double complex* coords = malloc(sample_count*sizeof(long double complex));
+	float* r_samples = malloc(sample_count*sizeof(float));
+	float* g_samples = malloc(sample_count*sizeof(float));
+	float* b_samples = malloc(sample_count*sizeof(float));
 	
-	// TODO Perfect use for a tagged heap?
-	void* buffer = malloc(alloc_size);
-	void* cursor = buffer;
+	// Create a group to act as a throttle for how many in flight subtasks are created. 
+	tina_group tile_throttle; tina_group_init(&tile_throttle);
 	
-	render_scanline_ctx* render_contexts = cursor;
-	cursor += batch_count*sizeof(render_scanline_ctx);
-	long double complex* coords = cursor;
-	cursor += sample_count*sizeof(long double complex);
-	float* r_samples = cursor;
-	cursor += sample_count*sizeof(float);
-	float* g_samples = cursor;
-	cursor += sample_count*sizeof(float);
-	float* b_samples = cursor;
-	
-	tina_group tile_governor; tina_group_init(&tile_governor);
-	
+	// OK! Now for the exciting part!
+	// Loop through all the pixels and subsamples (for anti-aliasing).
+	// Break them into batches of SAMPLE_BATCH_COUNT size, and create tasks to render them.
 	size_t sample_cursor = 0, batch_cursor = 0;
 	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
 		for(unsigned x = 0; x < TEXTURE_SIZE; x++){
 			for(unsigned sample = 0; sample < multisample_count; sample++){
+				// Jitter pixel locations using the R2 sequence.
 				uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*sample);
 				uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*sample);
+				// Transform to the final sample locations using the matrix.
 				Vec2 p = TransformPoint(ctx->matrix, (Vec2){
 					2*((long double)ssx/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 					2*((long double)ssy/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				});
 				coords[sample_cursor] = p.x + p.y*I;
 				
+				// Check if the batch is full, and generate a render task for it.
 				if((++sample_cursor & (SAMPLE_BATCH_COUNT - 1)) == 0){
 					// Check if this tile is already stale and bailout.
 					if(ctx->node->timestamp + 16 < TIMESTAMP){
 						ctx->node->requested = false;
-						tina_job_wait(job, &tile_governor, 0);
 						goto cleanup;
 					}
 					
@@ -206,15 +227,19 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 						.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 					};
 					
-					tina_job_wait(job, &tile_governor, 4);
-					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, ctx->queue_idx, &tile_governor);
+					// Wait until there are 4 or less tasks left in the system.
+					// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
+					tina_job_wait(job, &tile_throttle, 4);
+					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, ctx->queue_idx, &tile_throttle);
 					
 					batch_cursor++;
 				}
 			}
 		}
 	}
-	tina_job_wait(job, &tile_governor, 0);
+	
+	// Wait until all rendering tasks have finished.
+	tina_job_wait(job, &tile_throttle, 0);
 	
 	// Resolve samples.
 	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
@@ -234,15 +259,23 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 		}
 	}
 	
-	tina_job_switch_queue(job, QUEUE_GL);
+	// Sokol-GFX is a single threaded API, so we need to upload the pixel data on the rendering thread.
+	// By switching queues, we are yielding control to the scheduler.
+	// When tina_job_switch_queue() returns this task will be running on the GFX queue,
+	// which is explicitly flushed on the main thread during rendering.
+	tina_job_switch_queue(job, QUEUE_GFX);
+	
+	// Linear search for the oldest texture in the cache that is no longer used.
 	size_t texture_cursor = TEXTURE_CURSOR;
 	while(TEXTURE_NODE[texture_cursor] && TEXTURE_NODE[texture_cursor]->timestamp == TIMESTAMP){
 		texture_cursor = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
 	}
 	TEXTURE_CURSOR = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
 	
+	// Reclaim it from the previous owner.
 	if(TEXTURE_NODE[texture_cursor]) TEXTURE_NODE[texture_cursor]->texture.id = 0;
 	
+	// Upload and set up the new texture.
 	TEXTURE_NODE[texture_cursor] = ctx->node;
 	ctx->node->texture = TEXTURE_CACHE[texture_cursor];
 	sg_update_image(ctx->node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
@@ -250,8 +283,15 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 	free(pixels);
 	
 	cleanup:
+	// If we aborted because this was a stale tile, wait for all batches to finish before freeing their memory!
+	tina_job_wait(job, &tile_throttle, 0);
+	
 	free(ctx);
-	free(buffer);
+	free(render_contexts);
+	free(coords);
+	free(r_samples);
+	free(g_samples);
+	free(b_samples);
 }
 
 #define VIEW_RESET (Transform){0.75, 0, 0, 0.75, 0.5, 0}
@@ -264,7 +304,6 @@ static Transform pixel_to_world_matrix(void){
 	return TransformMult(vp_inv_matrix, pixel_to_clip);
 }
 
-typedef struct {} display_job_ctx;
 static Vec2 mouse_pos;
 
 static Transform sub_matrix(Transform m, long double x, long double y){
@@ -293,29 +332,41 @@ static void draw_tile(Transform mv_matrix, sg_image texture){
 	sgl_end();
 }
 
-static bool visit_tile(tile_node* node, Transform matrix){
+// Visit the image tile quadtree, recursively rendering and loading new nodes.
+static void visit_tile(tile_node* node, Transform matrix){
+	// Check if this tile is visible on the screen before continuing.
 	Transform mv_matrix = TransformMult(view_matrix, matrix);
-	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return true;
+	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return;
 	
 	node->timestamp = TIMESTAMP;
 	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
 	float scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
+		// This node has a texture. Draw it.
+		// If there are higher resolution tiles, just let them draw over the top.
+		// Don't really care about overdraw in a job system example.
+		draw_tile(mv_matrix, node->texture);
+		
+		// If this tile has a pixel density of < 1, draw it's children over the top.
 		if(scale > TEXTURE_SIZE){
+			// Allocate the children if they haven't been visited yet.
 			if(!node->children) node->children = calloc(4, sizeof(*node->children));
 			
-			draw_tile(mv_matrix, node->texture);
+			// Visit all of the children.
 			visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
 			visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
 			visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
 			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
-			return true;
 		}
-	} else if(!node->requested && JOB_GOVERNOR._count < 16){
+	} else if(!node->requested){
+		// This node is visible on screen, but it's texture has never been requested.
+		
 		node->requested = true;
+		// Mediocre hueristic to encourage low resolution tiles to load first.
 		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/512) - 1, QUEUE_HI_PRIORITY));
 		
+		// Set up a task to render the tile's image.
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
 		(*generate_ctx) = (generate_tile_ctx){
 			.queue_idx = queue_idx,
@@ -323,15 +374,13 @@ static bool visit_tile(tile_node* node, Transform matrix){
 			.node = node,
 		};
 		
-		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_GOVERNOR);
+		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_THROTTLE);
 	}
-	
-	return false;
 }
 
 static void app_display(void){
 	// Run jobs to load textures.
-	tina_scheduler_run(SCHED, QUEUE_GL, true, NULL);
+	tina_scheduler_run(SCHED, QUEUE_GFX, true, NULL);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
@@ -405,12 +454,12 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating SCHED.");
-	SCHED = tina_scheduler_new(MAX_JOBS, _QUEUE_COUNT, 128, 64*1024);
+	SCHED = tina_scheduler_new(1024, _QUEUE_COUNT, 128, 64*1024);
 	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
-	tina_group_init(&JOB_GOVERNOR);
+	tina_group_init(&JOB_THROTTLE);
 	
-	common_start_worker_threads(SCHED, QUEUE_HI_PRIORITY);
+	common_start_worker_threads(0, SCHED, QUEUE_HI_PRIORITY);
 	
 	puts("Init Sokol-GFX.");
 	sg_desc gfx_desc = {.image_pool_size = TEXTURE_CACHE_SIZE + 1};

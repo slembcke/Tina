@@ -23,9 +23,10 @@ SOFTWARE.
 #ifndef TINA_H
 #define TINA_H
 
-#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,13 +70,15 @@ tina* tina_new(size_t size, tina_func* body, void* user_data);
 // Free a coroutine created by tina_new().
 void tina_free(tina* coro);
 
-// Symbols for the assembly functions.
-// These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
-extern const uint64_t _tina_swap[];
-extern const uint64_t _tina_init_stack[];
+// Yield execution into (or out of) a coroutine.
+// NOTE: The implementation is simplistic and just swaps a continuation stored in the coroutine.
+// In other words: Coroutines can yield to other coroutines, but don't yield into a coroutine that hasn't yielded back to it's caller yet.
+// Treat them as reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
+uintptr_t tina_yield(tina* coro, uintptr_t value);
+
+#ifdef TINA_IMPLEMENTATION
 
 #ifndef _TINA_ASSERT
-#include <stdlib.h>
 #include <stdio.h>
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stdout, _MESSAGE_"\n"); abort();} }
 #endif
@@ -83,21 +86,10 @@ extern const uint64_t _tina_init_stack[];
 // Magic number to help assert for memory corruption errors.
 #define _TINA_MAGIC 0x54494E41u
 
-// Yield execution into (or out of) a coroutine.
-// NOTE: The implementation is simplistic and just swaps a continuation stored in the coroutine.
-// In other words: Coroutines can yield to other coroutines, but don't yield into a coroutine that hasn't yielded back to it's caller yet.
-// Treat them as reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
-static inline uintptr_t tina_yield(tina* coro, uintptr_t value){
-	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
-	
-	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
-	swap_func* swap = ((swap_func*)(void*)_tina_swap);
-	// TODO swap no longer needs the coro pointer.
-	// Could save a couple instructions? Meh. Too much testing effort.
-	return swap(NULL, value, &coro->_sp);
-}
-
-#ifdef TINA_IMPLEMENTATION
+// Symbols for the assembly functions.
+// These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
+extern const uint64_t _tina_swap[];
+extern const uint64_t _tina_init_stack[];
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	tina* coro = (tina*)buffer;
@@ -137,6 +129,16 @@ void _tina_context(tina* coro, tina_func* body){
 	}
 }
 
+uintptr_t tina_yield(tina* coro, uintptr_t value){
+	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
+	
+	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
+	swap_func* swap = ((swap_func*)(void*)_tina_swap);
+	// TODO swap no longer needs the coro pointer.
+	// Could save a couple instructions? Meh. Too much testing effort.
+	return swap(NULL, value, &coro->_sp);
+}
+
 #if __APPLE__
 	#define TINA_SYMBOL(sym) "_"#sym
 #else
@@ -168,7 +170,6 @@ void _tina_context(tina* coro, tina_func* body){
 	
 	// https://static.docs.arm.com/ihi0042/g/aapcs32.pdf
 	// _tina_swap() is responsible for swapping out the registers and stack pointer.
-	asm(".global _tina_swap");
 	asm("_tina_swap:");
 	// Like above, save the ABI protected registers and save the stack pointer.
 	asm("  push {r4-r11, lr}");
@@ -209,7 +210,6 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  jmp " TINA_SYMBOL(_tina_context));
 	
 	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
-	asm(".global " TINA_SYMBOL(_tina_swap));
 	asm(TINA_SYMBOL(_tina_swap:));
 	asm("  push rbp");
 	asm("  push rbx");
@@ -297,7 +297,6 @@ void _tina_context(tina* coro, tina_func* body){
 	asm("  mov lr, #0");
 	asm("  b _tina_context");
 
-	asm(".global " TINA_SYMBOL(_tina_swap));
 	asm(TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
 	asm("  stp x19, x20, [sp, 0x00]");

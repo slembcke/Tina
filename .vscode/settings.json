@@ -12,6 +12,7 @@
 		"numeric": "c",
 		"algorithm": "c",
 		"tgmath.h": "c",
-		"tina.h": "c"
+		"tina.h": "c",
+		"common.h": "c"
 	}
 }

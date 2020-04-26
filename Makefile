@@ -28,4 +28,4 @@ clean:
 
 $(EXAMPLES) $(TESTS): $(@:=.c) $(COMMON_OBJ)
 
-*.o: tina.h tina_jobs.h
+**/*.o: tina.h tina_jobs.h

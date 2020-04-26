@@ -2,6 +2,7 @@
 #include "libs/tinycthread.h"
 
 #define TINA_IMPLEMENTATION
+// #define _TINA_ASSERT(_COND_, _MESSAGE_) //{ if(!(_COND_)){fprintf(stdout, _MESSAGE_"\n"); abort();} }
 #include "tina.h"
 
 #define TINA_JOBS_IMPLEMENTATION
@@ -37,9 +38,13 @@ static int common_worker_body(void* data){
 	return 0;
 }
 
-void common_start_worker_threads(tina_scheduler* sched, unsigned queue_idx){
-	WORKER_COUNT = common_get_cpu_count();
-	printf("%d CPUs detected.\n", WORKER_COUNT);
+void common_start_worker_threads(unsigned thread_count, tina_scheduler* sched, unsigned queue_idx){
+	if(thread_count){
+		WORKER_COUNT = thread_count;
+	} else {
+		WORKER_COUNT = common_get_cpu_count();
+		printf("%d CPUs detected.\n", WORKER_COUNT);
+	}
 	
 	puts("Creating WORKERS.");
 	for(unsigned i = 0; i < WORKER_COUNT; i++){
