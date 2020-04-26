@@ -3,14 +3,14 @@
 #include <tgmath.h>
 #include <complex.h>
 
-#include "tinycthread.h"
+#include "libs/tinycthread.h"
 
 #define SOKOL_IMPL
 #define SOKOL_GL_IMPL
 #define SOKOL_GLCORE33
-#include "sokol_app.h"
-#include "sokol_gfx.h"
-#include "sokol_gl.h"
+#include "libs/sokol_app.h"
+#include "libs/sokol_gfx.h"
+#include "libs/sokol_gl.h"
 
 #define TINA_IMPLEMENTATION
 #include "../tina.h"

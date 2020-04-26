@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #define TINA_IMPLEMENTATION
-#include "tina.h"
+#include "../tina.h"
 
 static uintptr_t coro_body(tina* coro, uintptr_t value);
 static void coro_error(tina* coro, const char* message);

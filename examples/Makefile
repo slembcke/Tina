@@ -1,20 +1,22 @@
 CFLAGS =  -O0 -g -Wall -Werror -Wno-unused
-CFLAGS += -O3 -ffast-math
+# CFLAGS += -O3 -ffast-math
 
 # Linux
-LDFLAGS = -pthread -lm -lGL -lX11 -ldl -g
+LDFLAGS = -pthread -g
+LDLIBS = -lm -lGL -lX11 -ldl
 
 # Windows
-# LDFLAGS = -lgdi32
+# LDLIBS = -lgdi32
 
-.phony: clean default run
+EXAMPLES = \
+	coro-simple \
+	jobs-mandelbrot \
 
-all: mandelbrot
-
-mandelbrot: mandelbrot.o tinycthread.o
-	$(CC) $^ -o $@ $(LDFLAGS)
-
-*.o: ../tina.h ../tina_jobs.h
+all: $(EXAMPLES)
 
 clean:
-	-rm *.o mandelbrot mandelbrot.exe
+	-rm *.o $(EXAMPLES)
+
+$(EXAMPLES): $(@:=.c) libs/tinycthread.o
+
+*.o: ../tina.h ../tina_jobs.h
