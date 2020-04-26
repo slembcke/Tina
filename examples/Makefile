@@ -5,7 +5,6 @@ CFLAGS += -O3 -ffast-math
 LDFLAGS = -pthread -lm -lGL -lX11 -ldl -g
 
 # Windows
-# CC = x86_64-w64-mingw32-gcc -Wno-unknown-pragmas
 # LDFLAGS = -lgdi32
 
 .phony: clean default run
