@@ -5,10 +5,10 @@
 #include <assert.h>
 
 #define TINA_IMPLEMENTATION
-#include "tina.h"
+#include "../tina.h"
 
 #define TINA_JOBS_IMPLEMENTATION
-#include "tina_jobs.h"
+#include "../tina_jobs.h"
 
 tina_scheduler* TASKS;
 atomic_uint COUNT;
@@ -16,7 +16,7 @@ atomic_uint COUNT;
 static void TaskGeneric(tina_job* task, void* user_data, void** thread_data){
 	// printf("%s\n", task->name);
 	// thrd_sleep(&(struct timespec){.tv_nsec = 10}, NULL);
-	thrd_yield();
+	// thrd_yield();
 	atomic_fetch_add(&COUNT, 1);
 }
 

@@ -105,7 +105,8 @@ void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
 static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned queue_idx, tina_group* group){
-	tina_scheduler_enqueue_batch(sched, &(tina_job_description){.name = name, .func = func, .user_data = user_data, .queue_idx = queue_idx}, 1, group);
+	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .queue_idx = (uint8_t)queue_idx};
+	tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }
 // Convenience method. Enqueue some jobs and wait for them all to finish.
 void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_job* job);
@@ -296,7 +297,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 		_tina_queue* queue = &sched->_queues[queue_idx];
 		
 		// Exit conditions are at the bottom of the loop.
-		while(true){
+		while(!sched->_pause){
 			tina_job* job = _tina_scheduler_next_job(sched, queue);
 			if(job){
 				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
@@ -339,8 +340,8 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 				// No more tasks so we are done if run in flush mode.
 				break;
 			} else {
+				// Sleep until more work is added to the queue.
 				_TINA_COND_WAIT(sched->_wakeup, sched->_lock);
-				if(sched->_pause) break;
 			}
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
@@ -455,7 +456,8 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 	_TINA_COND_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(sched->_lock);_TINA_MUTEX_LOCK(sched->_lock); {
-		_tina_scheduler_enqueue_batch_nolock(sched, &(tina_job_description){.func = _tina_scheduler_sleep_wakeup, .user_data = &ctx}, 1, group);
+		tina_job_description desc = {.func = _tina_scheduler_sleep_wakeup, .user_data = &ctx};
+		_tina_scheduler_enqueue_batch_nolock(sched, &desc, 1, group);
 		_TINA_COND_WAIT(ctx.wakeup, sched->_lock);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 	
