@@ -46,7 +46,7 @@ typedef struct {
 	thrd_t thread;
 } worker_context;
 
-#define MAX_WORKERS 16
+#define MAX_WORKERS 64
 static unsigned WORKER_COUNT = MAX_WORKERS;
 worker_context WORKERS[MAX_WORKERS];
 
@@ -59,54 +59,53 @@ static int worker_body(void* data){
 #define TEXTURE_SIZE 256
 #define TEXTURE_CACHE_SIZE 1024
 
-typedef struct {long double x, y;} DriftVec2;
-typedef struct {long double a, b, c, d, x, y;} DriftAffine;
+typedef struct {long double x, y;} Vec2;
+typedef struct {long double a, b, c, d, x, y;} Transform;
 
-static const DriftAffine DRIFT_AFFINE_ZERO = {0, 0, 0, 0, 0, 0};
-static const DriftAffine DRIFT_AFFINE_IDENTITY = {1, 0, 0, 1, 0, 0};
+static const Transform TRANSFORM_IDENTITY = {1, 0, 0, 1, 0, 0};
 
-static inline DriftAffine DriftAffineMakeTranspose(long double a, long double c, long double x, long double b, long double d, long double y){
-	return (DriftAffine){a, b, c, d, x, y};
+static inline Transform TransformMakeTranspose(long double a, long double c, long double x, long double b, long double d, long double y){
+	return (Transform){a, b, c, d, x, y};
 }
 
-static inline DriftAffine DriftAffineMult(DriftAffine m1, DriftAffine m2){
-  return DriftAffineMakeTranspose(
+static inline Transform TransformMult(Transform m1, Transform m2){
+  return TransformMakeTranspose(
     m1.a*m2.a + m1.c*m2.b, m1.a*m2.c + m1.c*m2.d, m1.a*m2.x + m1.c*m2.y + m1.x,
     m1.b*m2.a + m1.d*m2.b, m1.b*m2.c + m1.d*m2.d, m1.b*m2.x + m1.d*m2.y + m1.y
   );
 }
 
-static inline DriftAffine DriftAffineInverse(DriftAffine m){
+static inline Transform TransformInverse(Transform m){
   long double inv_det = 1/(m.a*m.d - m.c*m.b);
-  return DriftAffineMakeTranspose(
+  return TransformMakeTranspose(
      m.d*inv_det, -m.c*inv_det, (m.c*m.y - m.d*m.x)*inv_det,
     -m.b*inv_det,  m.a*inv_det, (m.b*m.x - m.a*m.y)*inv_det
   );
 }
 
-static inline DriftAffine DriftAffineOrtho(const long double l, const long double r, const long double b, const long double t){
+static inline Transform TransformOrtho(const long double l, const long double r, const long double b, const long double t){
 	long double sx = 2/(r - l);
 	long double sy = 2/(t - b);
 	long double tx = -(r + l)/(r - l);
 	long double ty = -(t + b)/(t - b);
-	return DriftAffineMakeTranspose(
+	return TransformMakeTranspose(
 		sx,  0, tx,
 		 0, sy, ty
 	);
 }
 
-static inline DriftVec2 DriftAffinePoint(DriftAffine t, DriftVec2 p){
-	return (DriftVec2){t.a*p.x + t.c*p.y + t.x, t.b*p.x + t.d*p.y + t.y};
+static inline Vec2 TransformPoint(Transform t, Vec2 p){
+	return (Vec2){t.a*p.x + t.c*p.y + t.x, t.b*p.x + t.d*p.y + t.y};
 }
 
-static inline DriftVec2 DriftAffineVec(DriftAffine t, DriftVec2 p){
-	return (DriftVec2){t.a*p.x + t.c*p.y, t.b*p.x + t.d*p.y};
+static inline Vec2 TransformVec(Transform t, Vec2 p){
+	return (Vec2){t.a*p.x + t.c*p.y, t.b*p.x + t.d*p.y};
 }
 
-typedef struct {float m[16];} DriftGPUMatrix;
+typedef struct {float m[16];} GLMatrix;
 
-static inline DriftGPUMatrix DriftAffineToGPU(DriftAffine m){
-	return (DriftGPUMatrix){.m = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.x, m.y, 0, 1}};
+static inline GLMatrix TransformToGL(Transform m){
+	return (GLMatrix){.m = {m.a, m.b, 0, 0, m.c, m.d, 0, 0, 0, 0, 1, 0, m.x, m.y, 0, 1}};
 }
 
 uint64_t TIMESTAMP;
@@ -123,7 +122,7 @@ static tile_node TREE_ROOT;
 
 typedef struct {
 	unsigned queue_idx;
-	DriftAffine matrix;
+	Transform matrix;
 	tile_node* node;
 } generate_tile_ctx;
 
@@ -131,16 +130,6 @@ typedef struct {
 	unsigned xmin, xmax;
 	unsigned ymin, ymax;
 } mandelbrot_window;
-
-long double hermite(long double x){return x*x*(3 - 2*x);}
-
-long double addend_cosnorm(complex z){return creal(z/cabs(z));}
-
-long double addend_triangle(complex z, complex c){
-	long double min = fabs(cabs(z*z) - cabs(c));
-	long double max = cabs(z*z) + cabs(c);
-	return (cabs(z*z + c) - min)/(max - min);
-}
 
 size_t TEXTURE_CURSOR;
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
@@ -161,13 +150,9 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 	
 	const render_scanline_ctx* const ctx = user_data;
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		long double r = 0, g = 0, b = 0;
 		long double complex c = ctx->coords[idx];
 		long double complex z = c;
 		long double complex dz = 1;
-		
-		// long double min = INFINITY;
-		// long double sum = 0;
 		
 		unsigned i = 0;
 		while(cabs(z) <= bailout && i < maxi){
@@ -176,44 +161,30 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 				i = maxi;
 				break;
 			}
-			
-			// if(fabs(creal(-0.75 - z)) < 0.01){
-			// 	i = maxi;
-			// 	break;
-			// }
-			
-			// sum += addend_triangle(z, c);
-			
 			z = z*z + c;
 			i++;
 		}
 		
-		if(i < maxi){
+		if(i == maxi){
+			ctx->r_samples[idx] = 0;
+			ctx->g_samples[idx] = 0;
+			ctx->b_samples[idx] = 0;
+		} else {
 			long double rem = 1 + log2(log2(bailout)) - log2(log2(cabs(z)));
 			long double n = (i - 1) + rem;
-			// r += 1 - exp(-1e-2*n);
-			float phase = 5*log2(n);
-			r = 0.5 + 0.5*cos(phase + 0*M_PI/3);
-			g = 0.5 + 0.5*cos(phase + 2*M_PI/3);
-			b = 0.5 + 0.5*cos(phase + 4*M_PI/3);
-			// r += n;
-			// g += fmod(n, 1);
 			
-			// long double alpha = hermite(rem);
-			// r += (sum + alpha*addend_triangle(z, c))/(i + alpha);
-			// g = b = r;
+			long double phase = 5*log2(n);
+			ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
+			ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
+			ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
 		}
-		
-		ctx->r_samples[idx] = r;
-		ctx->g_samples[idx] = g;
-		ctx->b_samples[idx] = b;
 	}
 }
 
 static void generate_tile_job(tina_job* job, void* user_data, void** thread_data){
 	generate_tile_ctx *ctx = user_data;
 	
-	const unsigned multisample_count = 4;
+	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
 	const size_t alloc_size = (0
@@ -244,7 +215,7 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 			for(unsigned sample = 0; sample < multisample_count; sample++){
 				uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*sample);
 				uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*sample);
-				DriftVec2 p = DriftAffinePoint(ctx->matrix, (DriftVec2){
+				Vec2 p = TransformPoint(ctx->matrix, (Vec2){
 					2*((long double)ssx/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 					2*((long double)ssy/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				});
@@ -314,35 +285,35 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 	free(buffer);
 }
 
-#define VIEW_RESET (DriftAffine){0.75, 0, 0, 0.75, 0.5, 0}
-static DriftAffine proj_matrix = {1, 0, 0, 1, 0, 0};
-static DriftAffine view_matrix = VIEW_RESET;
+#define VIEW_RESET (Transform){0.75, 0, 0, 0.75, 0.5, 0}
+static Transform proj_matrix = {1, 0, 0, 1, 0, 0};
+static Transform view_matrix = VIEW_RESET;
 
-static DriftAffine pixel_to_world_matrix(void){
-	DriftAffine pixel_to_clip = DriftAffineOrtho(0, sapp_width(), sapp_height(), 0);
-	DriftAffine vp_inv_matrix = DriftAffineInverse(DriftAffineMult(proj_matrix, view_matrix));
-	return DriftAffineMult(vp_inv_matrix, pixel_to_clip);
+static Transform pixel_to_world_matrix(void){
+	Transform pixel_to_clip = TransformOrtho(0, sapp_width(), sapp_height(), 0);
+	Transform vp_inv_matrix = TransformInverse(TransformMult(proj_matrix, view_matrix));
+	return TransformMult(vp_inv_matrix, pixel_to_clip);
 }
 
 typedef struct {} display_job_ctx;
-static DriftVec2 mouse_pos;
+static Vec2 mouse_pos;
 
-static DriftAffine sub_matrix(DriftAffine m, long double x, long double y){
-	return (DriftAffine){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
+static Transform sub_matrix(Transform m, long double x, long double y){
+	return (Transform){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
 }
 
-static bool frustum_cull(const DriftAffine mvp){
+static bool frustum_cull(const Transform mvp){
 	// Clip space center and extents.
-	DriftVec2 c = {mvp.x, mvp.y};
+	Vec2 c = {mvp.x, mvp.y};
 	long double ex = fabs(mvp.a) + fabs(mvp.c);
 	long double ey = fabs(mvp.b) + fabs(mvp.d);
 	
 	return ((fabs(c.x) - ex < 1) && (fabs(c.y) - ey < 1));
 }
 
-static void draw_tile(DriftAffine mv_matrix, sg_image texture){
+static void draw_tile(Transform mv_matrix, sg_image texture){
 	sgl_matrix_mode_modelview();
-	sgl_load_matrix(DriftAffineToGPU(mv_matrix).m);
+	sgl_load_matrix(TransformToGL(mv_matrix).m);
 	
 	sgl_texture(texture);
 	sgl_begin_triangle_strip();
@@ -353,12 +324,12 @@ static void draw_tile(DriftAffine mv_matrix, sg_image texture){
 	sgl_end();
 }
 
-static bool visit_tile(tile_node* node, DriftAffine matrix){
-	DriftAffine mv_matrix = DriftAffineMult(view_matrix, matrix);
-	if(!frustum_cull(DriftAffineMult(proj_matrix, mv_matrix))) return true;
+static bool visit_tile(tile_node* node, Transform matrix){
+	Transform mv_matrix = TransformMult(view_matrix, matrix);
+	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return true;
 	
 	node->timestamp = TIMESTAMP;
-	DriftAffine ddm = DriftAffineMult(DriftAffineInverse(pixel_to_world_matrix()), matrix);
+	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
 	float scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
@@ -403,10 +374,10 @@ static void app_display(void){
 	
 	float pw = fmax(1, (float)w/(float)h);
 	float ph = fmax(1, (float)h/(float)w);
-	proj_matrix = DriftAffineOrtho(-pw, pw, -ph, ph);
+	proj_matrix = TransformOrtho(-pw, pw, -ph, ph);
 	
 	sgl_matrix_mode_projection();
-	sgl_load_matrix(DriftAffineToGPU(proj_matrix).m);
+	sgl_load_matrix(TransformToGL(proj_matrix).m);
 	
 	sgl_matrix_mode_texture();
 	sgl_load_matrix((float[]){
@@ -416,7 +387,7 @@ static void app_display(void){
 		0.5, 0.5, 0, 1,
 	});
 	
-	visit_tile(&TREE_ROOT, (DriftAffine){16, 0, 0, 16, 0, 0});
+	visit_tile(&TREE_ROOT, (Transform){16, 0, 0, 16, 0, 0});
 	
 	sgl_draw();
 	sg_end_pass();
@@ -433,12 +404,12 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_MOVE: {
-			DriftVec2 new_pos = (DriftVec2){event->mouse_x, event->mouse_y};
+			Vec2 new_pos = (Vec2){event->mouse_x, event->mouse_y};
 			if(mouse_drag){
-				DriftVec2 mouse_delta = {new_pos.x - mouse_pos.x, new_pos.y - mouse_pos.y};
-				DriftVec2 delta = DriftAffineVec(pixel_to_world_matrix(), mouse_delta);
-				DriftAffine t = {1, 0, 0, 1, delta.x, delta.y};
-				view_matrix = DriftAffineMult(view_matrix, t);
+				Vec2 mouse_delta = {new_pos.x - mouse_pos.x, new_pos.y - mouse_pos.y};
+				Vec2 delta = TransformVec(pixel_to_world_matrix(), mouse_delta);
+				Transform t = {1, 0, 0, 1, delta.x, delta.y};
+				view_matrix = TransformMult(view_matrix, t);
 			}
 			mouse_pos = new_pos;
 		}; break;
@@ -451,10 +422,10 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			long double scale = exp(-0.5*event->scroll_y);
-			DriftVec2 mpos = DriftAffinePoint(pixel_to_world_matrix(), mouse_pos);
-			DriftAffine t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
-			view_matrix = DriftAffineMult(view_matrix, t);
+			float scale = exp(-0.5*event->scroll_y);
+			Vec2 mpos = TransformPoint(pixel_to_world_matrix(), mouse_pos);
+			Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
+			view_matrix = TransformMult(view_matrix, t);
 		} break;
 		
 		default: break;
@@ -518,7 +489,8 @@ static void app_cleanup(void){
 	free(SCHED);
 	
 	puts("Sokol-GFX shutdown.");
-	// sg_shutdown();
+	sgl_shutdown();
+	sg_shutdown();
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
@@ -527,8 +499,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
 		.frame_cb = app_display,
 		.event_cb = app_event,
 		.cleanup_cb = app_cleanup,
-		.width = 2048,
-		.height = 2048,
+		.width = 1024,
+		.height = 1024,
 		.window_title = "Mandelbrot",
 	};
 }
