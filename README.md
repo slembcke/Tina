@@ -5,14 +5,13 @@ Tina is a teeny tiny, header only, coroutine library!
 * Super simple API. Basically just init() and yield().
 * Fast assembly language implementations.
 * Bring your own memory allocator.
-* Cross platform, supporting most common modern ABIs.
-* Minimal assembly footprint to support a new ABI. (armv7 is like a dozen instructions)
 * Supports GCC / Clang with inline assembly, and MSVC with inline machine code.
-* Supports common ABIs:
+* Cross platform, supporting most common modern ABIs.
 	* SysV for amd64 (Unixes + maybe PS4)
 	* Win64 (Windows + maybe Xbox?)
 	* ARM aarch32 and aarch64 (Linux, Rasperry Pi + maybe iOS / Android / Switch?)
 * Minimal code footprint. Currently ~200 sloc to support many common ABIs.
+* Minimal assembly footprint to support a new ABI. (armv7 is like a dozen instructions)
 
 ## Non-Features:
 * Definitely not production ready! (Please help me test!)
