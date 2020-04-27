@@ -37,7 +37,7 @@ Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-
 * Minimal code footprint. Currently ~300 sloc, should make it easy to modify.
 
 ## Non-Features:
-* Lock free: Atomics are hard...
+* Not lock free: Atomics are hard...
 * Not designed for high concurrency or performance
 	* Not lock free, doesn't implement work stealing, etc.
 	* Even my Raspberry Pi 4 had over 1 million jobs/sec for throughput. So it's not bad either.
