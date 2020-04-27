@@ -45,7 +45,7 @@ int main(int argc, const char *argv[]){
 	atomic_init(&COUNT, 0);
 	
 	SCHED = tina_scheduler_new(1024, 1, 64, 64*1024);
-	common_start_worker_threads(4, SCHED, 0);
+	common_start_worker_threads(1, SCHED, 0);
 	
 	// Seed the first 16 tasks into the system.
 	for(unsigned i = 0; i < 16; i++){

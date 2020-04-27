@@ -5,4 +5,7 @@ a.exe
 *.bin
 *.xxd
 
-examples/mandelbrot
+examples/coro-simple
+examples/jobs-mandelbrot
+test/cpp-test
+test/jobs-throughput

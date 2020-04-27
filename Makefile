@@ -15,7 +15,7 @@ COMMON_OBJ = \
 	common/common.o \
 
 TESTS = \
-	test/throughput \
+	test/jobs-throughput \
 
 EXAMPLES = \
 	examples/coro-simple \
