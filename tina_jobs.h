@@ -297,8 +297,8 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 		_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 		_tina_queue* queue = &sched->_queues[queue_idx];
 		
-		// Exit conditions are at the bottom of the loop.
-		while(!sched->_pause){
+		// If not in flush mode, keep looping until the scheduler is paused.
+		while(flush || !sched->_pause){
 			tina_job* job = _tina_scheduler_next_job(sched, queue);
 			if(job){
 				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
@@ -395,6 +395,7 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Jobs Error: Group is corrupt or uninitialized");
 		group->_job = job;
 		
+		// Check if we need to wait at all.
 		if(--group->_count > threshold){
 			group->_count -= threshold;
 			// Yield until the counter hits zero.
