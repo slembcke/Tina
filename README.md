@@ -7,15 +7,16 @@ Tina is a teeny tiny, header only, coroutine and job library!
 * Bring your own memory allocator.
 * Supports GCC / Clang with inline assembly, and MSVC with inline machine code.
 * Cross platform, supporting most common modern ABIs.
-	* SysV for amd64 (Unixes + maybe PS4)
-	* Win64 (Windows + maybe Xbox?)
-	* ARM aarch32 and aarch64 (Linux, Rasperry Pi + maybe iOS / Android / Switch?)
+	* SysV for amd64 (Unixes + probably PS4)
+	* Win64 (Windows + probably Xbox?)
+	* ARM aarch32 and aarch64 (Linux, Rasperry Pi + probably iOS / Android / Switch?)
 * Minimal code footprint. Currently ~200 sloc to support many common ABIs.
 * Minimal assembly footprint to support a new ABI. (armv7 is like a dozen instructions)
 
 ## Non-Features:
-* Definitely not production ready! (Please help me test!)
-* No intention to support old or less common ABIS, for example: 32 bit Intel, MIPS, etc. Pull requests are welcome though.
+* Maybe-not-quite production ready. (Please help me test!)
+* #ifdef checks for every possible system/compiler on the supported ABIs. (Pull requests encouraged!)
+* Don't really care about old or less common ABIS, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome)
 * No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds seem dumb.
 * Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like CreateFiber() or makecontext().
 * No stack overflow protection. Memory, and therefore memory protection is the user's job.
