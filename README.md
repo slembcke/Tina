@@ -1,5 +1,5 @@
 # Tina
-Tina is a teeny tiny, header only, coroutine library!
+Tina is a teeny tiny, header only, coroutine and job library!
 
 ## Features:
 * Super simple API. Basically just init() and yield().
