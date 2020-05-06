@@ -15,10 +15,10 @@ Tina is a teeny tiny, header only, coroutine and job library!
 
 ## Non-Features:
 * Maybe-not-quite production ready. (Please help me test!)
-* #ifdef checks for every possible system/compiler on the supported ABIs. (Pull requests encouraged!)
-* Don't really care about old or less common ABIS, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome)
-* No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds seem dumb.
-* Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like CreateFiber() or makecontext().
+* #ifdef checks for every concievable system/compiler on the supported ABIs. (Pull requests encouraged!)
+* I don't personally care about old or less common ABIs, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome.)
+* No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds are far from ideal.
+* Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like `CreateFiber()` or `makecontext()`.
 * No stack overflow protection. Memory, and therefore memory protection is the user's job.
 
 # Tina Jobs
@@ -39,60 +39,6 @@ Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-
 
 ## Non-Features:
 * Not lock free: Atomics are hard...
-* Not designed for high concurrency or performance
+* Not designed for extreme concurrency or performance.
 	* Not lock free, doesn't implement work stealing, etc.
 	* Even my Raspberry Pi 4 had over 1 million jobs/sec for throughput. So it's not bad either.
-
-## Example:
-```C
-#include <stdlib.h>
-#include <stdio.h>
-
-#define TINA_IMPLEMENTATION
-#include "tina.h"
-
-static uintptr_t coro_body(tina* coro, uintptr_t value);
-static void coro_error(tina* coro, const char* message);
-
-int main(int argc, const char *argv[]){
-	// Initialize a coroutine with some stack space, a body function, and some user data.
-	uint8_t buffer[1024*1024];
-	void* user_data = "some user data";
-	tina* coro = tina_init(buffer, sizeof(buffer), coro_body, user_data);
-	
-	// Optionally set some debugging values.
-	coro->name = "MyCoro";
-	coro->error_handler = coro_error;
-	
-	// Call tina_yield() to switch coroutines.
-	// You can optionally pass a value through to the coroutine as well.
-	while(coro->running) tina_yield(coro, 0);
-	
-	printf("Resuming again will call coro_error()\n");
-	tina_yield(coro, 0);
-	
-	return EXIT_SUCCESS;
-}
-
-// The body function is pretty straightforward.
-// It get's passed the coroutine and the first value passed to tina_yield().
-static uintptr_t coro_body(tina* coro, uintptr_t value){
-	printf("coro_body() enter\n");
-	printf("user_data: '%s'\n", (char*)coro->user_data);
-	
-	for(unsigned i = 0; i < 3; i++){
-		printf("coro_body(): %u\n", i);
-		tina_yield(coro, 0);
-	}
-	
-	// The return value is returned from tina_yield() in the caller.
-	return 0;
-}
-
-static void coro_error(tina* coro, const char* message){
-	printf("Tina error (%s): %s\n", coro->name, message);
-}
-```
-
-## TODO:
-* Need some real tests.
