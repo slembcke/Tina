@@ -54,6 +54,8 @@ void common_start_worker_threads(unsigned thread_count, tina_scheduler* sched, u
 	}
 }
 
+unsigned common_worker_count(void){return WORKER_COUNT;}
+
 void common_destroy_worker_threads(){
 	for(unsigned i = 0; i < WORKER_COUNT; i++) thrd_join(WORKERS[i].thread, NULL);
 }

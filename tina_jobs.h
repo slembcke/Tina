@@ -91,6 +91,8 @@ void tina_group_init(tina_group* group);
 
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
 void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group);
+// Add jobs to the scheduler, but don't allow more than 'max_count' jobs in 'group'. Returns the number of jobs added.
+size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group, size_t max_count);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -387,6 +389,22 @@ void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_descript
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		_tina_scheduler_enqueue_batch_nolock(sched, list, count, group);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
+}
+
+size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group, size_t max_count){
+	_TINA_MUTEX_LOCK(sched->_lock); {
+		if(group->_count < max_count){
+			// Adjust count if necessary.
+			size_t allowed = max_count - group->_count;
+			if(count > allowed) count = allowed;
+			_tina_scheduler_enqueue_batch_nolock(sched, list, count, group);
+		} else {
+			// Group is already full. Can't enqueue any jobs.
+			count = 0;
+		}
+	} _TINA_MUTEX_UNLOCK(sched->_lock);
+	
+	return count;
 }
 
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){

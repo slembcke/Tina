@@ -15,19 +15,20 @@
 
 #include "tina_jobs.h"
 
-tina_scheduler* SCHED;
-// We'll use this to throttle how quickly we add new rendering tasks to the system.
-tina_group JOB_THROTTLE;
-
 enum {
 	// Used as concurrent priority queues for rendering tiles.
 	QUEUE_LO_PRIORITY,
-	QUEUE_MED_PRIORITY,
+	QUEUE_MLO_PRIORITY,
+	QUEUE_MHI_PRIORITY,
 	QUEUE_HI_PRIORITY,
 	// A serial queue used to upload new textures.
 	QUEUE_GFX,
 	_QUEUE_COUNT,
 };
+
+tina_scheduler* SCHED;
+// We'll use this to throttle how quickly we add new rendering tasks to the system.
+tina_group JOB_THROTTLE[_QUEUE_COUNT];
 
 // A bunch of random 2D affine matrix code I pulled from another project.
 
@@ -123,6 +124,7 @@ typedef struct {
 
 // Context for the task to render sample batches.
 typedef struct {
+	bool* valid;
 	// Coordinates to be sampled.
 	long double complex* restrict coords;
 	// RGB output values.
@@ -140,6 +142,10 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 	const long double bailout = 256;
 	
 	const render_scanline_ctx* const ctx = user_data;
+	
+	// Check if the request is valid since waiting in the queue.
+	if(!ctx->valid) return;
+	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
 		long double complex c = ctx->coords[idx];
 		long double complex z = c;
@@ -221,15 +227,16 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 					
 					render_scanline_ctx* rctx = &render_contexts[batch_cursor];
 					(*rctx) = (render_scanline_ctx){
+						.valid = &ctx->node->requested,
 						.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
 						.r_samples = r_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 						.g_samples = g_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 						.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 					};
 					
-					// Wait until there are 4 or less tasks left in the system.
+					// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
 					// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
-					tina_job_wait(job, &tile_throttle, 4);
+					tina_job_wait(job, &tile_throttle, common_worker_count());
 					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, ctx->queue_idx, &tile_throttle);
 					
 					batch_cursor++;
@@ -340,7 +347,7 @@ static void visit_tile(tile_node* node, Transform matrix){
 	
 	node->timestamp = TIMESTAMP;
 	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
-	float scale = 2*sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+	float scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
 		// This node has a texture. Draw it.
@@ -362,10 +369,9 @@ static void visit_tile(tile_node* node, Transform matrix){
 	} else if(!node->requested){
 		// This node is visible on screen, but it's texture has never been requested.
 		
-		node->requested = true;
 		// Mediocre hueristic to encourage low resolution tiles to load first.
-		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/512) - 1, QUEUE_HI_PRIORITY));
-		
+		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/256) + 1, QUEUE_HI_PRIORITY));
+			
 		// Set up a task to render the tile's image.
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
 		(*generate_ctx) = (generate_tile_ctx){
@@ -374,7 +380,12 @@ static void visit_tile(tile_node* node, Transform matrix){
 			.node = node,
 		};
 		
-		tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_THROTTLE);
+		unsigned count = tina_scheduler_enqueue_throttled(SCHED, (tina_job_description[]){
+			{.name = "GenTiles", .func = generate_tile_job, .user_data = generate_ctx, .queue_idx = queue_idx}
+		}, 1, &JOB_THROTTLE[queue_idx], 4);
+		
+		// If the task was added, mark the node as requested.
+		if(count > 0) node->requested = true;
 	}
 }
 
@@ -440,7 +451,7 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			float scale = exp(-0.5*event->scroll_y);
+			float scale = exp(-0.25*event->scroll_y);
 			Vec2 mpos = TransformPoint(pixel_to_world_matrix(), mouse_pos);
 			Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = TransformMult(view_matrix, t);
@@ -455,9 +466,11 @@ static void app_init(void){
 	
 	puts("Creating SCHED.");
 	SCHED = tina_scheduler_new(1024, _QUEUE_COUNT, 128, 64*1024);
-	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MED_PRIORITY);
-	tina_scheduler_queue_priority(SCHED, QUEUE_MED_PRIORITY, QUEUE_LO_PRIORITY);
-	tina_group_init(&JOB_THROTTLE);
+	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MHI_PRIORITY);
+	tina_scheduler_queue_priority(SCHED, QUEUE_MHI_PRIORITY, QUEUE_MLO_PRIORITY);
+	tina_scheduler_queue_priority(SCHED, QUEUE_MLO_PRIORITY, QUEUE_LO_PRIORITY);
+	
+	for(unsigned i = 0; i < _QUEUE_COUNT; i++) tina_group_init(&JOB_THROTTLE[i]);
 	
 	common_start_worker_threads(0, SCHED, QUEUE_HI_PRIORITY);
 	

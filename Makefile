@@ -21,10 +21,15 @@ EXAMPLES = \
 	examples/coro-simple \
 	examples/jobs-mandelbrot \
 
+.PHONY: all clean %.gdb
+
 all: $(TESTS) test/cpp-test $(EXAMPLES)
 
 clean:
 	-rm **/*.o $(TESTS) test/cpp-test $(EXAMPLES)
+
+%.gdb: %
+	./gdb.sh $^
 
 $(EXAMPLES) $(TESTS): $(@:=.c) $(COMMON_OBJ)
 
