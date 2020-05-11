@@ -121,6 +121,12 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 
 #ifdef TINA_JOBS_IMPLEMENTATION
 
+// Minimum alignment when packing allocations.
+#define _TINA_JOBS_MIN_ALIGN 16
+
+// Make jobs cache sized.
+#define _TINA_JOB_SIZE 64
+
 // Override these. Based on C11 primitives.
 // Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
 #ifndef _TINA_MUTEX_T
@@ -133,6 +139,7 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 #define _TINA_COND_INIT(_SIG_) cnd_init(&_SIG_)
 #define _TINA_COND_DESTROY(_SIG_) cnd_destroy(&_SIG_)
 #define _TINA_COND_WAIT(_SIG_, _LOCK_) cnd_wait(&_SIG_, &_LOCK_);
+#define _TINA_COND_SIGNAL(_SIG_) cnd_signal(&_SIG_)
 #define _TINA_COND_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
 
@@ -143,6 +150,8 @@ struct tina_job {
 	void* thread_data;
 	tina_group* group;
 };
+
+_Static_assert(sizeof(tina_job) <= _TINA_JOB_SIZE, "_TINA_JOB_SIZE is too small.");
 
 typedef struct {
 	void** arr;
@@ -194,41 +203,54 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	return 0;
 }
 
+static inline uint _tina_jobs_align(size_t n){return ((n - 1)/_TINA_JOBS_MIN_ALIGN + 1)*_TINA_JOBS_MIN_ALIGN;}
+
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
+	size_t size = 0;
 	// Size of scheduler.
-	size_t size = sizeof(tina_scheduler);
+	size += _tina_jobs_align(sizeof(tina_scheduler));
 	// Size of queues.
-	size += queue_count*sizeof(_tina_queue);
+	size += _tina_jobs_align(queue_count*sizeof(_tina_queue));
+	// Size of fiber pool array.
+	size += _tina_jobs_align(fiber_count*sizeof(void*));
+	// Size of job pool array.
+	size += _tina_jobs_align(job_count*sizeof(void*));
 	// Size of queue arrays.
-	size += queue_count*job_count*sizeof(void*);
-	// Size of stack arrays for the pools.
-	size += (job_count + fiber_count)*sizeof(void*);
+	size += queue_count*_tina_jobs_align(job_count*sizeof(void*));
+	// Size of jobs.
+	size += job_count*_TINA_JOB_SIZE;
 	// Size of fibers.
 	size += fiber_count*stack_size;
-	// Size of jobs.
-	size += job_count*sizeof(tina_job);
 	return size;
 }
 
 tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	_TINA_ASSERT((job_count & (job_count - 1)) == 0, "Tina Jobs Error: Job count must be a power of two.");
+	_TINA_ASSERT((stack_size & (stack_size - 1)) == 0, "Tina Jobs Error: Stack size must be a power of two.");
 	uint8_t* cursor = (uint8_t*)_buffer;
 	
 	// Sub allocate all of the memory for the various arrays.
 	tina_scheduler* sched = (tina_scheduler*)cursor;
-	cursor += sizeof(tina_scheduler);
+	cursor += _tina_jobs_align(sizeof(tina_scheduler));
 	sched->_queues = (_tina_queue*)cursor;
-	cursor += queue_count*sizeof(_tina_queue);
+	cursor += _tina_jobs_align(queue_count*sizeof(_tina_queue));
 	sched->_fibers = (_tina_stack){.arr = (void**)cursor};
-	cursor += fiber_count*sizeof(void*);
+	cursor += _tina_jobs_align(fiber_count*sizeof(void*));
 	sched->_job_pool = (_tina_stack){.arr = (void**)cursor};
-	cursor += job_count*sizeof(void*);
+	cursor += _tina_jobs_align(job_count*sizeof(void*));
 	
-	// Initialize the queues.
+	// Initialize the queues arrays.
 	sched->_queue_count = queue_count;
 	for(unsigned i = 0; i < queue_count; i++){
 		sched->_queues[i] = (_tina_queue){.arr = (void**)cursor, .mask = job_count - 1};
-		cursor += job_count*sizeof(void*);
+		cursor += _tina_jobs_align(job_count*sizeof(void*));
+	}
+	
+	// Fill the job pool.
+	sched->_job_pool.count = job_count;
+	for(unsigned i = 0; i < job_count; i++){
+		sched->_job_pool.arr[i] = cursor;
+		cursor += _TINA_JOB_SIZE;
 	}
 	
 	// Initialize the fibers and fill the pool.
@@ -239,13 +261,6 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 		fiber->user_data = sched;
 		sched->_fibers.arr[i] = fiber;
 		cursor += stack_size;
-	}
-	
-	// Fill the job pool.
-	sched->_job_pool.count = job_count;
-	for(unsigned i = 0; i < job_count; i++){
-		sched->_job_pool.arr[i] = cursor;
-		cursor += sizeof(tina_job);
 	}
 	
 	// Initialize the control variables.
@@ -326,6 +341,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
 							queue->arr[--queue->tail & queue->mask] = group->_job;
 							queue->count++;
+							_TINA_COND_SIGNAL(sched->_wakeup);
 							// TODO is pushing it to the front the best thing to do?
 						}
 					} break;
@@ -334,6 +350,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 						_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
 						queue->arr[queue->head++ & queue->mask] = job;
 						queue->count++;
+						_TINA_COND_SIGNAL(sched->_wakeup);
 					} break;
 					case _TINA_STATUS_WAITING: {
 						// Do nothing. The job will be re-enqueued when it's done waiting.
@@ -381,8 +398,8 @@ static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const ti
 		_tina_queue* queue = &sched->_queues[list[i].queue_idx];
 		queue->arr[queue->head++ & queue->mask] = job;
 		queue->count++;
+		_TINA_COND_SIGNAL(sched->_wakeup);
 	}
-	_TINA_COND_BROADCAST(sched->_wakeup);
 }
 
 void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
@@ -467,7 +484,7 @@ static void _tina_scheduler_sleep_wakeup(tina_job* job, void* user_data, void** 
 	tina_job_wait(job, ctx->group, ctx->threshold);
 	
 	_TINA_MUTEX_LOCK(job->scheduler->_lock); {
-		_TINA_COND_BROADCAST(ctx->wakeup);
+		_TINA_COND_SIGNAL(ctx->wakeup);
 	} _TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 }
 
