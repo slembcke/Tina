@@ -23,6 +23,7 @@ SOFTWARE.
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdalign.h>
 
 #ifndef TINA_JOBS_H
 #define TINA_JOBS_H
@@ -124,9 +125,6 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 // Minimum alignment when packing allocations.
 #define _TINA_JOBS_MIN_ALIGN 16
 
-// Make jobs cache sized.
-#define _TINA_JOB_SIZE 64
-
 // Override these. Based on C11 primitives.
 // Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
 #ifndef _TINA_MUTEX_T
@@ -150,8 +148,6 @@ struct tina_job {
 	void* thread_data;
 	tina_group* group;
 };
-
-_Static_assert(sizeof(tina_job) <= _TINA_JOB_SIZE, "_TINA_JOB_SIZE is too small.");
 
 typedef struct {
 	void** arr;
@@ -218,7 +214,7 @@ size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fi
 	// Size of queue arrays.
 	size += queue_count*_tina_jobs_align(job_count*sizeof(void*));
 	// Size of jobs.
-	size += job_count*_TINA_JOB_SIZE;
+	size += job_count*_tina_jobs_align(sizeof(tina_job));
 	// Size of fibers.
 	size += fiber_count*stack_size;
 	return size;
@@ -250,7 +246,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	sched->_job_pool.count = job_count;
 	for(unsigned i = 0; i < job_count; i++){
 		sched->_job_pool.arr[i] = cursor;
-		cursor += _TINA_JOB_SIZE;
+		cursor += _tina_jobs_align(sizeof(tina_job));
 	}
 	
 	// Initialize the fibers and fill the pool.
