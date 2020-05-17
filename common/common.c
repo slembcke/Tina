@@ -14,10 +14,11 @@
 	#include <unistd.h>
 	static unsigned common_get_cpu_count(void){return sysconf(_SC_NPROCESSORS_ONLN);}
 #elif defined(__WINNT__)
-	#error TODO
-	SYSTEM_INFO sysinfo;
-	GetSystemInfo(&sysinfo);
-	int numCPU = sysinfo.dwNumberOfProcessors;
+	static unsigned common_get_cpu_count(void){
+		SYSTEM_INFO sysinfo;
+		GetSystemInfo(&sysinfo);
+		return sysinfo.dwNumberOfProcessors;
+	}
 #else
 	#error TODO Unhandled/unknown system type.
 #endif

@@ -1,4 +1,4 @@
-#include <threads.h>
+#include "common/libs/tinycthread.h"
 
 #define TINA_IMPLEMENTATION
 #include "tina.h"
