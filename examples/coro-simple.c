@@ -12,13 +12,13 @@ int main(int argc, const char *argv[]){
 
 	// Optionally set some debugging values.
 	coro->name = "MyCoro";
-	coro->error_handler = coro_error;
 	
 	// Call tina_yield() to switch coroutines.
 	// You can optionally pass a value through to the coroutine as well.
 	while(!coro->completed) tina_yield(coro, 0);
 	
-	printf("Resuming again will call coro_error()\n");
+	printf("Resuming again is an error and should throw an assertion (or abort() if assertions are disabled).\n");
+	printf("Wait for it...\n");
 	tina_yield(coro, 0);
 	
 	tina_free(coro);
@@ -38,8 +38,4 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 	
 	// The return value is returned from tina_yield() in the caller.
 	return 0;
-}
-
-static void coro_error(tina* coro, const char* message){
-	printf("Tina error (%s): %s\n", coro->name, message);
 }

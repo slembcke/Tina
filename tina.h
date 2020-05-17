@@ -46,8 +46,6 @@ struct tina {
 	void* user_data;
 	// User defined name. (optional)
 	const char* name;
-	// User defined error handler. (optional)
-	tina_error_handler* error_handler;
 	// Pointer to the coroutine's memory buffer. (readonly)
 	void* buffer;
 	// Size of the buffer. (readonly)
@@ -122,11 +120,9 @@ void _tina_context(tina* coro, tina_func* body){
 	// Yield the final return value back to the calling thread.
 	tina_yield(coro, value);
 	
-	// Any attempt to resume the coroutine after it's completed should call the error func.
-	while(true){
-		if(coro->error_handler) coro->error_handler(coro, "Attempted to resume a dead coroutine.");
-		tina_yield(coro, 0);
-	}
+	_TINA_ASSERT(false, "Tina Error: You cannot resume a coroutine after it has finished.");
+	// Crash predictably if assertions are disabled.
+	abort();
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
