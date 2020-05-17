@@ -13,6 +13,8 @@
 		"algorithm": "c",
 		"tgmath.h": "c",
 		"tina.h": "c",
-		"common.h": "c"
+		"common.h": "c",
+		"tina_jobs.h": "c",
+		"tinycthread.h": "c"
 	}
 }

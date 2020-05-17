@@ -158,15 +158,20 @@ typedef struct {
 typedef struct _tina_queue _tina_queue;
 struct _tina_queue{
 	void** arr;
-	_tina_queue* fallback;
 	size_t head, tail, count, mask;
+	
+	// Previous queue in a priority chain used to locate the root queueu for signaling.
+	_tina_queue* prev;
+	// Next queue in a priority chain used as a fallback when this queue is empty.
+	_tina_queue* next;
+	// Condition variable to signal when the queue has work. Unused if not the root in priority chain.
+	_TINA_COND_T signal;
 };
 
 struct tina_scheduler {
 	// Thread control variables.
 	bool _pause;
 	_TINA_MUTEX_T _lock;
-	_TINA_COND_T _wakeup;
 	
 	_tina_queue* _queues;
 	size_t _queue_count;
@@ -199,7 +204,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	return 0;
 }
 
-static inline uint _tina_jobs_align(size_t n){return ((n - 1)/_TINA_JOBS_MIN_ALIGN + 1)*_TINA_JOBS_MIN_ALIGN;}
+static inline unsigned _tina_jobs_align(size_t n){return ((n - 1)/_TINA_JOBS_MIN_ALIGN + 1)*_TINA_JOBS_MIN_ALIGN;}
 
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	size_t size = 0;
@@ -230,15 +235,18 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	cursor += _tina_jobs_align(sizeof(tina_scheduler));
 	sched->_queues = (_tina_queue*)cursor;
 	cursor += _tina_jobs_align(queue_count*sizeof(_tina_queue));
-	sched->_fibers = (_tina_stack){.arr = (void**)cursor};
+	sched->_fibers = (_tina_stack){.arr = (void**)cursor, .count = 0};
 	cursor += _tina_jobs_align(fiber_count*sizeof(void*));
-	sched->_job_pool = (_tina_stack){.arr = (void**)cursor};
+	sched->_job_pool = (_tina_stack){.arr = (void**)cursor, .count = 0};
 	cursor += _tina_jobs_align(job_count*sizeof(void*));
 	
 	// Initialize the queues arrays.
 	sched->_queue_count = queue_count;
 	for(unsigned i = 0; i < queue_count; i++){
-		sched->_queues[i] = (_tina_queue){.arr = (void**)cursor, .mask = job_count - 1};
+		_tina_queue* queue = &sched->_queues[i];
+		queue->arr = (void**)cursor;
+		queue->mask = job_count - 1;
+		_TINA_COND_INIT(queue->signal);
 		cursor += _tina_jobs_align(job_count*sizeof(void*));
 	}
 	
@@ -261,14 +269,13 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	
 	// Initialize the control variables.
 	_TINA_MUTEX_INIT(sched->_lock);
-	_TINA_COND_INIT(sched->_wakeup);
 	
 	return sched;
 }
 
 void tina_scheduler_destroy(tina_scheduler* sched){
 	_TINA_MUTEX_DESTROY(sched->_lock);
-	_TINA_COND_DESTROY(sched->_wakeup);
+	for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_DESTROY(sched->_queues[i].signal);
 }
 
 tina_scheduler* tina_scheduler_new(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
@@ -285,21 +292,28 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 	_TINA_ASSERT(fallback_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 	
-	_tina_queue* queue = &sched->_queues[queue_idx];
-	_TINA_ASSERT(queue->fallback == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
-	
-	queue->fallback = &sched->_queues[fallback_idx];
+	_tina_queue* prev = &sched->_queues[queue_idx];
+	_tina_queue* next = &sched->_queues[fallback_idx];
+	_TINA_ASSERT(prev->next == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
+	_TINA_ASSERT(next->prev == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
+
+	prev->next = next;
+	next->prev = prev;
 }
 
-static inline tina_job* _tina_scheduler_next_job(tina_scheduler* sched, _tina_queue* queue){
-	if(queue->count > 0){
-		queue->count--;
-		return (tina_job*)queue->arr[queue->tail++ & queue->mask];
-	} else if(queue->fallback){
-		return _tina_scheduler_next_job(sched, queue->fallback);
-	} else {
-		return NULL;
-	}
+static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
+	do {
+		if(queue->count > 0){
+			queue->count--;
+			return (tina_job*)queue->arr[queue->tail++ & queue->mask];
+		}
+	} while((queue = queue->next));
+	return NULL;
+}
+
+static inline void _tina_queue_signal(_tina_queue* queue){
+	while(queue->prev) queue = queue->prev;
+	_TINA_COND_SIGNAL(queue->signal);
 }
 
 void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, void* thread_data){
@@ -312,7 +326,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 		
 		// If not in flush mode, keep looping until the scheduler is paused.
 		while(flush || !sched->_pause){
-			tina_job* job = _tina_scheduler_next_job(sched, queue);
+			tina_job* job = _tina_queue_next_job(queue);
 			if(job){
 				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 				// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
@@ -337,7 +351,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
 							queue->arr[--queue->tail & queue->mask] = group->_job;
 							queue->count++;
-							_TINA_COND_SIGNAL(sched->_wakeup);
+							_tina_queue_signal(queue);
 							// TODO is pushing it to the front the best thing to do?
 						}
 					} break;
@@ -346,7 +360,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 						_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
 						queue->arr[queue->head++ & queue->mask] = job;
 						queue->count++;
-						_TINA_COND_SIGNAL(sched->_wakeup);
+						_tina_queue_signal(queue);
 					} break;
 					case _TINA_STATUS_WAITING: {
 						// Do nothing. The job will be re-enqueued when it's done waiting.
@@ -357,7 +371,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 				break;
 			} else {
 				// Sleep until more work is added to the queue.
-				_TINA_COND_WAIT(sched->_wakeup, sched->_lock);
+				_TINA_COND_WAIT(queue->signal, sched->_lock);
 			}
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
@@ -366,13 +380,13 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 void tina_scheduler_pause(tina_scheduler* sched){
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = true;
-		_TINA_COND_BROADCAST(sched->_wakeup);
+		for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_BROADCAST(sched->_queues[i].signal);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
 void tina_group_init(tina_group* group){
 	// Count is initailized to 1 because tina_job_wait() also decrements the count for symmetry reasons.
-	(*group) = (tina_group){._count = 1, ._magic = _TINA_MAGIC};
+	(*group) = (tina_group){._job = NULL, ._count = 1, ._magic = _TINA_MAGIC};
 }
 
 static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
@@ -388,13 +402,13 @@ static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const ti
 		
 		// Pop a job from the pool.
 		tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-		(*job) = (tina_job){.desc = list[i], .scheduler = sched, .group = group};
+		(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_data = NULL, .group = group};
 		
 		// Push it to the proper queue.
 		_tina_queue* queue = &sched->_queues[list[i].queue_idx];
 		queue->arr[queue->head++ & queue->mask] = job;
 		queue->count++;
-		_TINA_COND_SIGNAL(sched->_wakeup);
+		_tina_queue_signal(queue);
 	}
 }
 
@@ -485,11 +499,13 @@ static void _tina_scheduler_sleep_wakeup(tina_job* job, void* user_data, void** 
 }
 
 void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsigned threshold){
-	_tina_wakeup_ctx ctx = {.group = group, .threshold = threshold};
+	_tina_wakeup_ctx ctx;
+	ctx.group = group;
+	ctx.threshold = threshold;
 	_TINA_COND_INIT(ctx.wakeup);
 	
 	_TINA_MUTEX_LOCK(sched->_lock);_TINA_MUTEX_LOCK(sched->_lock); {
-		tina_job_description desc = {.func = _tina_scheduler_sleep_wakeup, .user_data = &ctx};
+		tina_job_description desc = {.name = NULL, .func = _tina_scheduler_sleep_wakeup, .user_data = &ctx, .queue_idx = 0};
 		_tina_scheduler_enqueue_batch_nolock(sched, &desc, 1, group);
 		_TINA_COND_WAIT(ctx.wakeup, sched->_lock);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
