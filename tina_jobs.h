@@ -160,12 +160,13 @@ struct _tina_queue{
 	void** arr;
 	size_t head, tail, count, mask;
 	
-	// Previous queue in a priority chain used to locate the root queueu for signaling.
+	// Previous queue in a priority chain used to locate the root queue used for signaling.
 	_tina_queue* prev;
 	// Next queue in a priority chain used as a fallback when this queue is empty.
 	_tina_queue* next;
-	// Condition variable to signal when the queue has work. Unused if not the root in priority chain.
-	_TINA_COND_T signal;
+	// Semaphore to wait for more work in this queue.
+	_TINA_COND_T semaphore_signal;
+	unsigned semaphore_count;
 };
 
 struct tina_scheduler {
@@ -246,7 +247,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 		_tina_queue* queue = &sched->_queues[i];
 		queue->arr = (void**)cursor;
 		queue->mask = job_count - 1;
-		_TINA_COND_INIT(queue->signal);
+		_TINA_COND_INIT(queue->semaphore_signal);
 		cursor += _tina_jobs_align(job_count*sizeof(void*));
 	}
 	
@@ -275,7 +276,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 
 void tina_scheduler_destroy(tina_scheduler* sched){
 	_TINA_MUTEX_DESTROY(sched->_lock);
-	for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_DESTROY(sched->_queues[i].signal);
+	for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_DESTROY(sched->_queues[i].semaphore_signal);
 }
 
 tina_scheduler* tina_scheduler_new(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
@@ -312,8 +313,12 @@ static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
 }
 
 static inline void _tina_queue_signal(_tina_queue* queue){
-	while(queue->prev) queue = queue->prev;
-	_TINA_COND_SIGNAL(queue->signal);
+	do {
+		if(queue->semaphore_count){
+			_TINA_COND_SIGNAL(queue->semaphore_signal);
+			queue->semaphore_count--;
+		}
+	} while((queue = queue->prev));
 }
 
 void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, void* thread_data){
@@ -371,7 +376,8 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 				break;
 			} else {
 				// Sleep until more work is added to the queue.
-				_TINA_COND_WAIT(queue->signal, sched->_lock);
+				queue->semaphore_count++;
+				_TINA_COND_WAIT(queue->semaphore_signal, sched->_lock);
 			}
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
@@ -380,7 +386,10 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 void tina_scheduler_pause(tina_scheduler* sched){
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = true;
-		for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_BROADCAST(sched->_queues[i].signal);
+		for(unsigned i = 0; i < sched->_queue_count; i++){
+			_TINA_COND_BROADCAST(sched->_queues[i].semaphore_signal);
+			sched->_queues[i].semaphore_count = 0;
+		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
