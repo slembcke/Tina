@@ -513,9 +513,9 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 	ctx.threshold = threshold;
 	_TINA_COND_INIT(ctx.wakeup);
 	
-	_TINA_MUTEX_LOCK(sched->_lock);_TINA_MUTEX_LOCK(sched->_lock); {
-		tina_job_description desc = {.name = NULL, .func = _tina_scheduler_sleep_wakeup, .user_data = &ctx, .queue_idx = 0};
-		_tina_scheduler_enqueue_batch_nolock(sched, &desc, 1, group);
+	_TINA_MUTEX_LOCK(sched->_lock); {
+		tina_job_description desc = {.name = "_tina_scheduler_sleep_wakeup()", .func = _tina_scheduler_sleep_wakeup, .user_data = &ctx, .queue_idx = 0};
+		_tina_scheduler_enqueue_batch_nolock(sched, &desc, 1, NULL);
 		_TINA_COND_WAIT(ctx.wakeup, sched->_lock);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 	
