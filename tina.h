@@ -59,11 +59,11 @@ struct tina {
 };
 
 // Initialize a coroutine and return a pointer to it.
-// Coroutine's created this way do not need to be destroyed or freed.
-// You are responsible for 'buffer', but it will be stored in tina->buffer for you.
+// You are responsible for managing the memory in 'buffer', but as a convenience it will be stored in tina.buffer for you.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
 // Allocate and initialize a coroutine and return a pointer to it.
+// Coroutines created this way must be freed using tina_free().
 tina* tina_new(size_t size, tina_func* body, void* user_data);
 // Free a coroutine created by tina_new().
 void tina_free(tina* coro);
@@ -71,7 +71,7 @@ void tina_free(tina* coro);
 // Yield execution into (or out of) a coroutine.
 // NOTE: The implementation is simplistic and just swaps a continuation stored in the coroutine.
 // In other words: Coroutines can yield to other coroutines, but don't yield into a coroutine that hasn't yielded back to it's caller yet.
-// Treat them as reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
+// Treat them as non-reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
