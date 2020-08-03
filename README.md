@@ -43,4 +43,4 @@ Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-
 ## Limitations:
 * Not designed for extreme concurrency or throughput. (Not lock free, doesn't implement work stealing, etc)
 * No dynamic allocations at runtime means you have to cap the maximum job/fiber counts at init time.
-* Limited built in syncronization: No a trivial way for multiple jobs to wait for the same job.
+* Limited built in syncronization: Ex: There isn't a trivial way for multiple jobs to wait for the same job.
