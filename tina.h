@@ -36,13 +36,11 @@ extern "C" {
 typedef struct tina tina;
 
 // Coroutine body function type.
+// 'value' will be the value passed to the initial call to tina_yield() that starts the coroutine.
 typedef uintptr_t tina_func(tina* coro, uintptr_t value);
 
-// Error callback function type.
-typedef void tina_error_handler(tina* coro, const char* message);
-
 struct tina {
-	// User defined context pointer.
+	// User defined context pointer passed to tina_init().
 	void* user_data;
 	// User defined name. (optional)
 	const char* name;
@@ -50,7 +48,7 @@ struct tina {
 	void* buffer;
 	// Size of the buffer. (readonly)
 	size_t size;
-	// Has the coroutine's function exited? (readonly)
+	// Has the coroutine's body function exited? (readonly)
 	bool completed;
 	
 	// Private implementation details.
@@ -58,19 +56,15 @@ struct tina {
 	uint32_t _magic;
 };
 
-// Initialize a coroutine and return a pointer to it.
-// You are responsible for managing the memory in 'buffer', but as a convenience it will be stored in tina.buffer for you.
+// Initialize a coroutine into a memory buffer.
+// If 'buffer' is NULL, it will malloc() one for you. You are responsible to call free(tina.buffer) when you are done with it.
+// 'body' is the function that will run inside of the coroutine, and 'user_data' will be stored in tina.user_data.
+// The initialized coroutine is not started. You must call tina_yield() to do that.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
-// Allocate and initialize a coroutine and return a pointer to it.
-// Coroutines created this way must be freed using tina_free().
-tina* tina_new(size_t size, tina_func* body, void* user_data);
-// Free a coroutine created by tina_new().
-void tina_free(tina* coro);
-
-// Yield execution into (or out of) a coroutine.
-// NOTE: The implementation is simplistic and just swaps a continuation stored in the coroutine.
-// In other words: Coroutines can yield to other coroutines, but don't yield into a coroutine that hasn't yielded back to it's caller yet.
+// Yield execution into another coroutine, or yield back to the caller by yielding to itself (the tina value passed to the body function).
+// NOTE: The implementation is not fully symmetric and for simplicity just swaps a continuation stored in the coroutine.
+// In other words: Coroutines can yield to other coroutines, but don't yield to a coroutine that hasn't yielded back to it's caller yet.
 // Treat them as non-reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
 
@@ -78,7 +72,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 
 #ifndef _TINA_ASSERT
 #include <stdio.h>
-#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stdout, _MESSAGE_"\n"); abort();} }
+#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stderr, _MESSAGE_"\n"); abort();} }
 #endif
 
 // Magic number to help assert for memory corruption errors.
@@ -89,7 +83,11 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
 
-tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
+tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
+	_TINA_ASSERT(size >= 64*1024, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
+	if(buffer == NULL) buffer = malloc(size);
+	
+	// TODO check alignment?
 	tina* coro = (tina*)buffer;
 	coro->user_data = user_data;
 	coro->completed = false;
@@ -100,14 +98,6 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data) {
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
 	init_func* init = ((init_func*)(void*)_tina_init_stack);
 	return init(coro, body, &coro->_sp, (uint8_t*)buffer + size);
-}
-
-tina* tina_new(size_t size, tina_func* body, void* user_data){
-	return tina_init(malloc(size), size, body, user_data);
-}
-
-void tina_free(tina* coro){
-	free(coro->buffer);
 }
 
 void _tina_context(tina* coro, tina_func* body){

@@ -8,7 +8,7 @@ static void coro_error(tina* coro, const char* message);
 
 int main(int argc, const char *argv[]){
 	// Initialize a coroutine with some stack space, a body function, and some user data.
-	tina* coro = tina_new(1024*1024, coro_body, "A user data pointer.");
+	tina* coro = tina_init(NULL, 1024*1024, coro_body, "A user data pointer.");
 
 	// Optionally set some debugging values.
 	coro->name = "MyCoro";
@@ -21,7 +21,7 @@ int main(int argc, const char *argv[]){
 	printf("Wait for it...\n");
 	tina_yield(coro, 0);
 	
-	tina_free(coro);
+	free(coro->buffer);
 	return EXIT_SUCCESS;
 }
 
