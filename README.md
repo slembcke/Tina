@@ -2,9 +2,9 @@
 Tina is a teeny tiny, header only, coroutine and job library!
 
 ## Features:
-* Super simple API. Basically just init() and yield().
+* Super simple API: Basically just `init()` and `yield()`.
+* Bring your own memory (or let Tina `malloc()` for you).
 * Fast assembly language implementations.
-* Bring your own memory allocator.
 * Supports GCC / Clang with inline assembly, and MSVC with inline machine code.
 * Cross platform, supporting most common modern ABIs.
 	* SysV for amd64 (Unixes + probably PS4)
@@ -13,13 +13,13 @@ Tina is a teeny tiny, header only, coroutine and job library!
 * Minimal code footprint. Currently ~200 sloc to support many common ABIs.
 * Minimal assembly footprint to support a new ABI. (armv7 is like a dozen instructions)
 
-## Non-Features:
-* Maybe-not-quite production ready. (Please help me test!)
-* #ifdef checks for every concievable system/compiler on the supported ABIs. (Pull requests encouraged!)
+## Limitations:
+* Limited testing: User feedback has been good, and they "work on my machines". (More feedback please. :D)
+* Supported platforms are the ones I've used recently. Probably needs #ifdef changes for more exotic ones. (Pull requests welcome.)
 * I don't personally care about old or less common ABIs, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome.)
-* No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds are far from ideal.
-* Not vanilla, "portable", C code by wrapping kinda-sorta-deprecated, platform specific APIs like `CreateFiber()` or `makecontext()`.
-* No stack overflow protection. Memory, and therefore memory protection is the user's job.
+* No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds are complicated.
+* Limited stack overflow detection! Bring your own memory means you need to bring your own guard pages and security.
+* Not fully symmetric: Coroutines can call other coroutines, but you can't call a coroutine that hasn't yielded back to it's caller.
 
 # Tina Jobs
 Tina Jobs is a job system built on top of Tina.
