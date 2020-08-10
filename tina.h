@@ -76,7 +76,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 #endif
 
 // Magic number to help assert for memory corruption errors.
-#define _TINA_MAGIC 0x54494E41u
+#define _TINA_MAGIC 0x54494E41ul
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
