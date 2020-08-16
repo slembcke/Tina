@@ -27,6 +27,7 @@ typedef struct {
 	thrd_t thread;
 	tina_scheduler* sched;
 	unsigned queue_idx;
+	unsigned thread_id;
 } worker_context;
 
 #define MAX_WORKERS 256
@@ -35,7 +36,7 @@ worker_context WORKERS[MAX_WORKERS];
 
 static int common_worker_body(void* data){
 	worker_context* ctx = data;
-	tina_scheduler_run(ctx->sched, ctx->queue_idx, false, ctx);
+	tina_scheduler_run(ctx->sched, ctx->queue_idx, false, ctx->thread_id);
 	return 0;
 }
 
@@ -50,7 +51,7 @@ void common_start_worker_threads(unsigned thread_count, tina_scheduler* sched, u
 	puts("Creating WORKERS.");
 	for(unsigned i = 0; i < WORKER_COUNT; i++){
 		worker_context* worker = WORKERS + i;
-		(*worker) = (worker_context){.sched = sched, .queue_idx = queue_idx};
+		(*worker) = (worker_context){.sched = sched, .queue_idx = queue_idx, .thread_id = i};
 		thrd_create(&worker->thread, common_worker_body, worker);
 	}
 }
