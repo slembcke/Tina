@@ -1,4 +1,4 @@
-CFLAGS =  -O0 -g -Wall -Wextra -Werror -Wno-unused -I.
+CFLAGS =  -O0 -g -Wall -Wextra -Werror -Wno-unused -I . -I ..
 CFLAGS += -O3 -ffast-math
 
 CXXFLAGS = $(CFLAGS) -Wno-missing-field-initializers
@@ -39,4 +39,4 @@ $(EXAMPLES) $(TESTS): $(@:=.c) $(COMMON_OBJ)
 test/cpp-test: test/cpp-test.cc common/libs/tinycthread.o
 	$(CXX) $^ $(CFLAGS) $(LDFLAGS) -o $@
 
-**/*.o: tina.h tina_jobs.h
+**/*.o: ../tina.h ../tina_jobs.h

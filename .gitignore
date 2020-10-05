@@ -4,8 +4,9 @@ a.exe
 
 *.bin
 *.xxd
+*.exe
 
-examples/coro-simple
-examples/jobs-mandelbrot
-test/cpp-test
-test/jobs-throughput
+coro-simple
+jobs-mandelbrot
+cpp-test
+jobs-throughput
