@@ -205,7 +205,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	return 0;
 }
 
-static inline unsigned _tina_jobs_align(size_t n){return ((n - 1)/_TINA_JOBS_MIN_ALIGN + 1)*_TINA_JOBS_MIN_ALIGN;}
+static inline size_t _tina_jobs_align(size_t n){return -(-n & -_TINA_JOBS_MIN_ALIGN);}
 
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	size_t size = 0;
@@ -339,7 +339,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 				job->thread_data = thread_data;
 				
 				// Yield to the job's fiber to run it.
-				switch(tina_yield(job->fiber, (uintptr_t)job)){
+				switch(tina_resume(job->fiber, (uintptr_t)job)){
 					case _TINA_STATUS_ABORTED: {
 						// Worker fiber state not reset with a clean exit. Need to do it explicitly.
 						tina_init(job->fiber, job->fiber->size, _tina_jobs_fiber, sched);

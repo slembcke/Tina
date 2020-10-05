@@ -36,7 +36,8 @@ extern "C" {
 typedef struct tina tina;
 
 // Coroutine body function type.
-// 'value' will be the value passed to the initial call to tina_yield() that starts the coroutine.
+// 'value' will be the value passed to the initial call to tina_resume() that starts the coroutine.
+// The return value will be returned from the tina_resume() call that activated the coroutine.
 typedef uintptr_t tina_func(tina* coro, uintptr_t value);
 
 struct tina {
@@ -50,6 +51,8 @@ struct tina {
 	size_t size;
 	// Has the coroutine's body function exited? (readonly)
 	bool completed;
+	// Has the coroutine been resumed, but not yet yielded? (readonly)
+	bool active;
 	
 	// Private implementation details.
 	void* _sp;
@@ -62,10 +65,13 @@ struct tina {
 // The initialized coroutine is not started. You must call tina_yield() to do that.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
-// Yield execution into another coroutine, or yield back to the caller by yielding to itself (the tina value passed to the body function).
-// NOTE: The implementation is not fully symmetric and for simplicity just swaps a continuation stored in the coroutine.
-// In other words: Coroutines can yield to other coroutines, but don't yield to a coroutine that hasn't yielded back to it's caller yet.
-// Treat them as non-reentrant or you'll get continuations and coroutines scrambled in a way that's probably more confusing than helpful.
+// Resume running a coroutine.
+// 'value' is passed to the body function for newly initialized coroutines, or returned from tina_yield() otherwise.
+// Resuming a coroutine that hasn't yet called tina_yield() is undefined.
+uintptr_t tina_resume(tina* coro, uintptr_t value);
+
+// Yield control back to the coroutine that called tina_resume().
+// 'value' is returned from the tina_resume() call that activated this coroutine.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
@@ -87,10 +93,11 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	_TINA_ASSERT(size >= 64*1024, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
 	if(buffer == NULL) buffer = malloc(size);
 	
-	// TODO check alignment?
-	tina* coro = (tina*)buffer;
+	// Make sure 'buffer' is properly aligned.
+	tina* coro = (tina*)(-(-(uintptr_t)buffer & -sizeof(void*)));
 	coro->user_data = user_data;
 	coro->completed = false;
+	coro->active = true;
 	coro->buffer = buffer;
 	coro->size = size;
 	coro->_magic = _TINA_MAGIC;
@@ -115,14 +122,19 @@ void _tina_context(tina* coro, tina_func* body){
 	abort();
 }
 
+typedef uintptr_t _tina_swap_t(tina* coro, uintptr_t value, void** sp);
+
+uintptr_t tina_resume(tina* coro, uintptr_t value){
+	_TINA_ASSERT(!coro->active, "Tina Error: tina_resume() called on a coroutine that was already active.");
+	coro->active = true;
+	return ((_tina_swap_t*)_tina_swap)(coro, value, &coro->_sp);
+}
+
 uintptr_t tina_yield(tina* coro, uintptr_t value){
 	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
-	
-	typedef uintptr_t swap_func(tina* coro, uintptr_t value, void** sp);
-	swap_func* swap = ((swap_func*)(void*)_tina_swap);
-	// TODO swap no longer needs the coro pointer.
-	// Could save a couple instructions? Meh. Too much testing effort.
-	return swap(NULL, value, &coro->_sp);
+	_TINA_ASSERT(coro->active, "Tina Error: tina_yield() called on a coroutine that wasn't active.");
+	coro->active = false;
+	return ((_tina_swap_t*)_tina_swap)(coro, value, &coro->_sp);
 }
 
 #if __APPLE__

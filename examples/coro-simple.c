@@ -15,18 +15,18 @@ int main(int argc, const char *argv[]){
 	
 	// Call tina_yield() to switch coroutines.
 	// You can optionally pass a value through to the coroutine as well.
-	while(!coro->completed) tina_yield(coro, 0);
+	while(!coro->completed) tina_resume(coro, 0);
 	
 	printf("Resuming again is an error and should throw an assertion (or abort() if assertions are disabled).\n");
 	printf("Wait for it...\n");
-	tina_yield(coro, 0);
+	tina_resume(coro, 0);
 	
 	free(coro->buffer);
 	return EXIT_SUCCESS;
 }
 
 // The body function is pretty straightforward.
-// It get's passed the coroutine and the first value passed to tina_yield().
+// It get's passed the coroutine and the first value passed to tina_resume().
 static uintptr_t coro_body(tina* coro, uintptr_t value){
 	printf("coro_body() enter\n");
 	printf("user_data: '%s'\n", (char*)coro->user_data);
@@ -36,6 +36,6 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 		tina_yield(coro, 0);
 	}
 	
-	// The return value is returned from tina_yield() in the caller.
+	// The return value is returned from tina_resume() in the caller.
 	return 0;
 }

@@ -2,7 +2,7 @@
 Tina is a teeny tiny, header only, coroutine and job library!
 
 ## Features:
-* Super simple API: Basically just `init()` and `yield()`.
+* Super simple API: Basically just `init()`, `resume()`, and `yield()`.
 * Bring your own memory (or let Tina `malloc()` for you).
 * Fast assembly language implementations.
 * Supports GCC / Clang with inline assembly, and MSVC with inline machine code.
@@ -14,12 +14,14 @@ Tina is a teeny tiny, header only, coroutine and job library!
 * Minimal code footprint. Currently ~200 sloc.
 
 ## Limitations:
+* "Asymmetric" coroutines: Somewhat like call/return for regular functions, asymmetric coroutines have a resume/yield structure.
 * Limited testing: User feedback has been good, and they "work on my machines". (More feedback please. :D)
 * Probably needs ifdef changes on platforms I didn't test on, like consoles or mobile. (Pull requests welcome.)
 * I don't personally care about old or less common ABIs, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome.)
 * No WASM support. Stack manipulation is intentionally disallowed in WASM for now, and the workarounds are complicated.
 * Limited stack overflow detection! Bring your own memory means you need to bring your own guard pages and security.
-* Probably not secure: Provides limited stack overflow detection. Bring your own guard pages and security if needed.
+* Security: I am not a security expert, but there are probably security implications for stack modification.
+* I haven't stabilized the API yet. Still trying to make small improvements and tweaks.
 
 # Tina Jobs
 Tina Jobs is a fiber based job system built on top of Tina.
@@ -44,3 +46,4 @@ Based on this talk: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-
 * Not designed for extreme concurrency or throughput. (Not lock free, doesn't implement work stealing, etc)
 * No dynamic allocations at runtime means you have to cap the maximum job/fiber counts at init time.
 * Limited built in syncronization: Ex: There isn't a trivial way for multiple jobs to wait for the same job.
+* I haven't stabilized the API yet. Changes are still somewhat likely while I add more syncronization primitives.
