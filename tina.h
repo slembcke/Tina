@@ -103,8 +103,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	coro->_magic = _TINA_MAGIC;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	init_func* init = ((init_func*)(void*)_tina_init_stack);
-	return init(coro, body, &coro->_sp, (uint8_t*)buffer + size);
+	return ((init_func*)_tina_init_stack)(coro, body, &coro->_sp, (uint8_t*)buffer + size);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -138,9 +137,9 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 }
 
 #if __APPLE__
-	#define TINA_SYMBOL(sym) "_"#sym
+	#define _TINA_SYMBOL(sym) "_"#sym
 #else
-	#define TINA_SYMBOL(sym) #sym
+	#define _TINA_SYMBOL(sym) #sym
 #endif
 
 #if __ARM_EABI__ && __GNUC__
@@ -194,7 +193,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	
 	asm(".intel_syntax noprefix");
 	
-	asm(TINA_SYMBOL(_tina_init_stack:));
+	asm(_TINA_SYMBOL(_tina_init_stack:));
 	asm("  push rbp");
 	asm("  push rbx");
 	asm("  push r12");
@@ -205,10 +204,10 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  and " ARG3 ", ~0xF");
 	asm("  mov rsp, " ARG3);
 	asm("  push 0");
-	asm("  jmp " TINA_SYMBOL(_tina_context));
+	asm("  jmp " _TINA_SYMBOL(_tina_context));
 	
 	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
-	asm(TINA_SYMBOL(_tina_swap:));
+	asm(_TINA_SYMBOL(_tina_swap:));
 	asm("  push rbp");
 	asm("  push rbx");
 	asm("  push r12");
@@ -234,8 +233,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	#if __GNUC__
 		#define TINA_SECTION_ATTRIBUTE __attribute__((section(".text#")))
 	#elif _MSC_VER
-		#pragma section("tina", execute)
-		#define TINA_SECTION_ATTRIBUTE __declspec(allocate("tina"))
+		#define TINA_SECTION_ATTRIBUTE __declspec(allocate(".text"))
 	#else
 		#error Unknown/untested compiler for Win64. 
 	#endif
@@ -276,7 +274,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 		0x90909090909090c3, 0x9090909090909090,
 	};
 #elif __aarch64__ && __GNUC__
-	asm(TINA_SYMBOL(_tina_init_stack:));
+	asm(_TINA_SYMBOL(_tina_init_stack:));
 	asm("  sub sp, sp, 0xA0");
 	asm("  stp x19, x20, [sp, 0x00]");
 	asm("  stp x21, x22, [sp, 0x10]");
@@ -295,7 +293,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  mov lr, #0");
 	asm("  b _tina_context");
 
-	asm(TINA_SYMBOL(_tina_swap:));
+	asm(_TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
 	asm("  stp x19, x20, [sp, 0x00]");
 	asm("  stp x21, x22, [sp, 0x10]");
