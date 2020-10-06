@@ -32,12 +32,12 @@ tina_group JOB_THROTTLE[_QUEUE_COUNT];
 
 // A bunch of random 2D affine matrix code I pulled from another project.
 
-typedef struct {long double x, y;} Vec2;
-typedef struct {long double a, b, c, d, x, y;} Transform;
+typedef struct {double x, y;} Vec2;
+typedef struct {double a, b, c, d, x, y;} Transform;
 
 static const Transform TRANSFORM_IDENTITY = {1, 0, 0, 1, 0, 0};
 
-static inline Transform TransformMakeTranspose(long double a, long double c, long double x, long double b, long double d, long double y){
+static inline Transform TransformMakeTranspose(double a, double c, double x, double b, double d, double y){
 	return (Transform){a, b, c, d, x, y};
 }
 
@@ -49,18 +49,18 @@ static inline Transform TransformMult(Transform m1, Transform m2){
 }
 
 static inline Transform TransformInverse(Transform m){
-  long double inv_det = 1/(m.a*m.d - m.c*m.b);
+  double inv_det = 1/(m.a*m.d - m.c*m.b);
   return TransformMakeTranspose(
      m.d*inv_det, -m.c*inv_det, (m.c*m.y - m.d*m.x)*inv_det,
     -m.b*inv_det,  m.a*inv_det, (m.b*m.x - m.a*m.y)*inv_det
   );
 }
 
-static inline Transform TransformOrtho(const long double l, const long double r, const long double b, const long double t){
-	long double sx = 2/(r - l);
-	long double sy = 2/(t - b);
-	long double tx = -(r + l)/(r - l);
-	long double ty = -(t + b)/(t - b);
+static inline Transform TransformOrtho(const double l, const double r, const double b, const double t){
+	double sx = 2/(r - l);
+	double sy = 2/(t - b);
+	double tx = -(r + l)/(r - l);
+	double ty = -(t + b)/(t - b);
 	return TransformMakeTranspose(
 		sx,  0, tx,
 		 0, sy, ty
@@ -126,7 +126,7 @@ typedef struct {
 typedef struct {
 	bool* valid;
 	// Coordinates to be sampled.
-	long double complex* restrict coords;
+	double complex* restrict coords;
 	// RGB output values.
 	float* restrict r_samples;
 	float* restrict g_samples;
@@ -139,7 +139,7 @@ typedef struct {
 // Task function that renders mandelbrot samples.
 static void render_samples_job(tina_job* job, void* user_data, void** thread_data){
 	const unsigned maxi = 32*1024;
-	const long double bailout = 256;
+	const double bailout = 256;
 	
 	const render_scanline_ctx* const ctx = user_data;
 	
@@ -147,9 +147,9 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 	if(!ctx->valid) return;
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		long double complex c = ctx->coords[idx];
-		long double complex z = c;
-		long double complex dz = 1;
+		double complex c = ctx->coords[idx];
+		double complex z = c;
+		double complex dz = 1;
 		
 		// Iterate until the fractal function diverges.
 		unsigned i = 0;
@@ -170,10 +170,10 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 			ctx->g_samples[idx] = 0;
 			ctx->b_samples[idx] = 0;
 		} else {
-			long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
-			long double n = (i - 1) + rem;
+			double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
+			double n = (i - 1) + rem;
 			
-			long double phase = 5*log2(n);
+			double phase = 5*log2(n);
 			ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
 			ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
 			ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
@@ -192,7 +192,7 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 	// Allocate memory for the sample coords and output values.
 	// You'd probably want to batch allocate these if this was a real thing.
 	render_scanline_ctx* render_contexts = malloc(batch_count*sizeof(render_scanline_ctx));
-	long double complex* coords = malloc(sample_count*sizeof(long double complex));
+	double complex* coords = malloc(sample_count*sizeof(double complex));
 	float* r_samples = malloc(sample_count*sizeof(float));
 	float* g_samples = malloc(sample_count*sizeof(float));
 	float* b_samples = malloc(sample_count*sizeof(float));
@@ -212,8 +212,8 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 				uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*sample);
 				// Transform to the final sample locations using the matrix.
 				Vec2 p = TransformPoint(ctx->matrix, (Vec2){
-					2*((long double)ssx/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-					2*((long double)ssy/(long double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
+					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
 				});
 				coords[sample_cursor] = p.x + p.y*I;
 				
@@ -313,15 +313,15 @@ static Transform pixel_to_world_matrix(void){
 
 static Vec2 mouse_pos;
 
-static Transform sub_matrix(Transform m, long double x, long double y){
+static Transform sub_matrix(Transform m, double x, double y){
 	return (Transform){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
 }
 
 static bool frustum_cull(const Transform mvp){
 	// Clip space center and extents.
 	Vec2 c = {mvp.x, mvp.y};
-	long double ex = fabs(mvp.a) + fabs(mvp.c);
-	long double ey = fabs(mvp.b) + fabs(mvp.d);
+	double ex = fabs(mvp.a) + fabs(mvp.c);
+	double ey = fabs(mvp.b) + fabs(mvp.d);
 	
 	return ((fabs(c.x) - ex < 1) && (fabs(c.y) - ey < 1));
 }
