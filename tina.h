@@ -64,13 +64,14 @@ struct tina {
 // The initialized coroutine is not started. You must call tina_yield() to do that.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
-// Resume running a coroutine.
-// 'value' is passed to the body function for newly initialized coroutines, or returned from tina_yield() otherwise.
-// Resuming a coroutine that hasn't yet called tina_yield() is undefined.
+// Swap between two coroutines symmetrically, passing a value between them.
+// Note: tina_resume() and tina_yield() are for assymetric coroutines. Don't mix the two APIs.
+uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
+
+// Resume running a coroutine, passing a value to the coroutine.
 uintptr_t tina_resume(tina* coro, uintptr_t value);
 
-// Yield control back to the coroutine that called tina_resume().
-// 'value' is returned from the tina_resume() call that activated this coroutine.
+// Yield a coroutine back to it's caller, and pass back a value.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
@@ -115,6 +116,7 @@ void _tina_context(tina* coro, tina_func* body){
 	// body() has exited, and the coroutine is completed.
 	coro->completed = true;
 	// Yield the final return value back to the calling thread.
+	_TINA_ASSERT(coro->_caller, "Tina Error: Return from coroutine body function not entered using tina_resume().");
 	tina_yield(coro, value);
 	
 	_TINA_ASSERT(false, "Tina Error: You cannot resume a coroutine after it has finished.");
@@ -122,7 +124,7 @@ void _tina_context(tina* coro, tina_func* body){
 	abort();
 }
 
-uintptr_t tina_switch(tina* from, tina* to, uintptr_t value){
+uintptr_t tina_swap(tina* from, tina* to, uintptr_t value){
 	typedef uintptr_t swap(void** sp_from, void** sp_to, uintptr_t value);
 	return ((swap*)_tina_swap)(&from->_sp, &to->_sp, value);
 }
@@ -131,7 +133,7 @@ uintptr_t tina_resume(tina* coro, uintptr_t value){
 	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
 	tina caller = {};
 	coro->_caller = &caller;
-	return tina_switch(&caller, coro, value);
+	return tina_swap(&caller, coro, value);
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
@@ -139,7 +141,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	_TINA_ASSERT(coro->_caller, "Tina Error: tina_yield() called on a coroutine that wasn't resumed.");
 	tina* caller = coro->_caller;
 	coro->_caller = NULL;
-	return tina_switch(coro, caller, value);
+	return tina_swap(coro, caller, value);
 }
 
 #if __APPLE__
