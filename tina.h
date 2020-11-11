@@ -51,10 +51,9 @@ struct tina {
 	size_t size;
 	// Has the coroutine's body function exited? (readonly)
 	bool completed;
-	// Has the coroutine been resumed, but not yet yielded? (readonly)
-	bool active;
 	
 	// Private implementation details.
+	tina* _caller;
 	void* _sp;
 	uint32_t _magic;
 };
@@ -97,13 +96,15 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina* coro = (tina*)(-(-(uintptr_t)buffer & -sizeof(void*)));
 	coro->user_data = user_data;
 	coro->completed = false;
-	coro->active = true;
 	coro->buffer = buffer;
 	coro->size = size;
 	coro->_magic = _TINA_MAGIC;
+	
+	tina caller = {};
+	coro->_caller = &caller;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)_tina_init_stack)(coro, body, &coro->_sp, (uint8_t*)buffer + size);
+	return ((init_func*)_tina_init_stack)(coro, body, &caller._sp, (uint8_t*)buffer + size);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -121,19 +122,24 @@ void _tina_context(tina* coro, tina_func* body){
 	abort();
 }
 
-typedef uintptr_t _tina_swap_t(tina* coro, uintptr_t value, void** sp);
+uintptr_t tina_switch(tina* from, tina* to, uintptr_t value){
+	typedef uintptr_t swap(void** sp_from, void** sp_to, uintptr_t value);
+	return ((swap*)_tina_swap)(&from->_sp, &to->_sp, value);
+}
 
 uintptr_t tina_resume(tina* coro, uintptr_t value){
-	_TINA_ASSERT(!coro->active, "Tina Error: tina_resume() called on a coroutine that was already active.");
-	coro->active = true;
-	return ((_tina_swap_t*)_tina_swap)(coro, value, &coro->_sp);
+	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
+	tina caller = {};
+	coro->_caller = &caller;
+	return tina_switch(&caller, coro, value);
 }
 
 uintptr_t tina_yield(tina* coro, uintptr_t value){
 	_TINA_ASSERT(coro->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
-	_TINA_ASSERT(coro->active, "Tina Error: tina_yield() called on a coroutine that wasn't active.");
-	coro->active = false;
-	return ((_tina_swap_t*)_tina_swap)(coro, value, &coro->_sp);
+	_TINA_ASSERT(coro->_caller, "Tina Error: tina_yield() called on a coroutine that wasn't resumed.");
+	tina* caller = coro->_caller;
+	coro->_caller = NULL;
+	return tina_switch(coro, caller, value);
 }
 
 #if __APPLE__
@@ -214,16 +220,15 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  push r13");
 	asm("  push r14");
 	asm("  push r15");
-	asm("  mov rax, rsp");
-	asm("  mov rsp, [" ARG2 "]");
-	asm("  mov [" ARG2 "], rax");
+	asm("  mov [" ARG0 "], rsp");
+	asm("  mov rsp, [" ARG1 "]");
 	asm("  pop r15");
 	asm("  pop r14");
 	asm("  pop r13");
 	asm("  pop r12");
 	asm("  pop rbx");
 	asm("  pop rbp");
-	asm("  mov " RET ", " ARG1);
+	asm("  mov " RET ", " ARG2);
 	asm("  ret");
 	
 	asm(".att_syntax");
