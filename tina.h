@@ -179,16 +179,14 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	// Like above, save the ABI protected registers and save the stack pointer.
 	asm("  push {r4-r11, lr}");
 	asm("  vpush {q4-q7}");
-	asm("  mov r3, sp");
-	// Restore the stack pointer for the new coroutine.
-	asm("  ldr sp, [r2]");
-	// And save the previous stack pointer into the coroutine object.
-	asm("  str r3, [r2]");
+	// Save stack pointer for the old coroutine, and load the new one.
+	asm("  str sp, [r0]");
+	asm("  ldr sp, [r1]");
 	// Restore the new coroutine's protected registers.
 	asm("  vpop {q4-q7}");
 	asm("  pop {r4-r11, lr}");
 	// Move the 'value' parameter to the return value register.
-	asm("  mov r0, r1");
+	asm("  mov r0, r2");
 	// And perform a normal return instruction.
 	// This will return from tina_yield() in the new coroutine.
 	asm("  bx lr");
