@@ -35,9 +35,8 @@ _tina_swap:
 	movaps [rsp + 0x10], xmm14
 	movaps [rsp + 0x00], xmm15
 
-	mov rax, rsp
-	mov rsp, [ARG2]
-	mov [ARG2], rax
+	mov [ARG0], rsp
+	mov rsp, [ARG1]
 	
 	movaps  xmm6, [rsp + 0x90]
 	movaps  xmm7, [rsp + 0x80]
@@ -62,5 +61,5 @@ _tina_swap:
 	pop rsi
 	pop rbx
 	pop rbp
-	mov RET, ARG1
+	mov RET, ARG2
 	ret

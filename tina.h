@@ -268,15 +268,14 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 		0x8024bc290f000000, 0x2444290f44000000,
 		0x4460244c290f4470, 0x290f44502454290f,
 		0x2464290f4440245c, 0x4420246c290f4430,
-		0x290f44102474290f, 0x208b49e08948243c,
-		0x9024b4280f008949, 0x8024bc280f000000,
-		0x2444280f44000000, 0x4460244c280f4470,
-		0x280f44502454280f, 0x2464280f4440245c,
-		0x4420246c280f4430, 0x280f44102474280f,
-		0x0000a0c48148243c, 0x00147825048f6500,
-		0x00001025048f6500, 0x00000825048f6500,
-		0x415d415e415f4100, 0xd089485d5b5e5f5c,
-		0x90909090909090c3, 0x9090909090909090,
+		0x290f44102474290f, 0x228b48218948243c,
+		0x0000009024b4280f, 0x0000008024bc280f,
+		0x0f44702444280f44, 0x54280f4460244c28,
+		0x40245c280f445024, 0x0f44302464280f44,
+		0x74280f4420246c28, 0x48243c280f441024,
+		0x8f65000000a0c481, 0x8f65000014782504,
+		0x8f65000000102504, 0x5f41000000082504,
+		0x5e5f5c415d415e41, 0x9090c3c0894c5d5b,
 	};
 #elif __aarch64__ && __GNUC__
 	asm(_TINA_SYMBOL(_tina_init_stack:));
@@ -311,9 +310,9 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  stp d12, d13, [sp, 0x80]");
 	asm("  stp d14, d15, [sp, 0x90]");
 	asm("  mov x3, sp");
-	asm("  ldr x4, [x2]");
-	asm("  mov sp, x4");
-	asm("  str x3, [x2]");
+	asm("  str x3, [x0]");
+	asm("  ldr x3, [x1]");
+	asm("  mov sp, x3");
 	asm("  ldp x19, x20, [sp, 0x00]");
 	asm("  ldp x21, x22, [sp, 0x10]");
 	asm("  ldp x23, x24, [sp, 0x20]");
@@ -325,7 +324,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  ldp d12, d13, [sp, 0x80]");
 	asm("  ldp d14, d15, [sp, 0x90]");
 	asm("  add sp, sp, 0xA0");
-	asm("  mov x0, x1");
+	asm("  mov x0, x2");
 	asm("  ret");
 #endif
 
