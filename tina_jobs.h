@@ -42,8 +42,8 @@ typedef struct tina_group tina_group;
 // Job function prototype.
 // 'job' is a reference to the job to use with the yield/switch/abort functions.
 // 'user_data' is the pointer you supplied when creating the job.
-// 'thread_data' is a handle for the pointer passed to the tina_scheduler_run() call that is processing this job.
-typedef void tina_job_func(tina_job* job, void* user_data, void** thread_data);
+// 'thread_id' is a pointer to the thread id the job is running on. Don't cache the id as it changes when the job yields.
+typedef void tina_job_func(tina_job* job, void* user_data, unsigned* thread_id);
 
 typedef struct {
 	// Job name. (optional)
@@ -82,8 +82,8 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 // Execute jobs continuously on the current thread.
 // Only returns if tina_scheduler_pause() is called, or if the queue becomes empty and 'flush' is true.
 // You can run this continuously on worker threads or use it to explicitly flush certain queues.
-// 'thread_data' is a user context pointer passed through tina_job.thread_data to provide thread local functionality such as memory pooling.
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, void* thread_data);
+// 'thread_id' is a user provided id that is passed into jobs running on this thread. Use it for thread local memory pooling, etc.
+void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, unsigned thread_id);
 // Pause execution of jobs on all threads as soon as their current jobs finish.
 void tina_scheduler_pause(tina_scheduler* sched);
 
@@ -145,7 +145,7 @@ struct tina_job {
 	tina_job_description desc;
 	tina_scheduler* scheduler;
 	tina* fiber;
-	void* thread_data;
+	unsigned thread_id;
 	tina_group* group;
 };
 
@@ -194,7 +194,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 		// Unlock the mutex while executing a job.
 		_TINA_MUTEX_UNLOCK(sched->_lock); {
 			tina_job* job = (tina_job*)value;
-			job->desc.func(job, job->desc.user_data, &job->thread_data);
+			job->desc.func(job, job->desc.user_data, &job->thread_id);
 		} _TINA_MUTEX_LOCK(sched->_lock);
 		
 		// Yield the completed status back to the scheduler, and recieve the next job.
@@ -321,7 +321,7 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 	} while((queue = queue->prev));
 }
 
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, void* thread_data){
+void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, unsigned thread_id){
 	// Job loop is only unlocked while running a job or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = false;
@@ -336,7 +336,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, v
 				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 				// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
 				if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
-				job->thread_data = thread_data;
+				job->thread_id = thread_id;
 				
 				// Yield to the job's fiber to run it.
 				switch(tina_resume(job->fiber, (uintptr_t)job)){
@@ -411,7 +411,7 @@ static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const ti
 		
 		// Pop a job from the pool.
 		tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-		(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_data = NULL, .group = group};
+		(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_id = 0, .group = group};
 		
 		// Push it to the proper queue.
 		_tina_queue* queue = &sched->_queues[list[i].queue_idx];
@@ -498,7 +498,7 @@ typedef struct {
 	_TINA_COND_T wakeup;
 } _tina_wakeup_ctx;
 
-static void _tina_scheduler_sleep_wakeup(tina_job* job, void* user_data, void** thread_data){
+static void _tina_scheduler_sleep_wakeup(tina_job* job, void* user_data, unsigned* thread_id){
 	_tina_wakeup_ctx* ctx = (_tina_wakeup_ctx*)user_data;
 	tina_job_wait(job, ctx->group, ctx->threshold);
 	

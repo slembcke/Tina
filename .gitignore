@@ -4,6 +4,7 @@ a.exe
 
 *.bin
 *.xxd
+*.exe
 
 extras/examples/coro-simple
 extras/examples/jobs-mandelbrot

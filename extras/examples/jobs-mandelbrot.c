@@ -137,7 +137,7 @@ typedef struct {
 #define SAMPLE_BATCH_COUNT 256
 
 // Task function that renders mandelbrot samples.
-static void render_samples_job(tina_job* job, void* user_data, void** thread_data){
+static void render_samples_job(tina_job* job, void* user_data, unsigned* thread_id){
 	const unsigned maxi = 32*1024;
 	const double bailout = 256;
 	
@@ -182,7 +182,7 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 }
 
 // Task function that renders mandelbrot image tiles.
-static void generate_tile_job(tina_job* job, void* user_data, void** thread_data){
+static void generate_tile_job(tina_job* job, void* user_data, unsigned* thread_id){
 	generate_tile_ctx *ctx = user_data;
 	
 	const unsigned multisample_count = 1;
@@ -391,7 +391,7 @@ static void visit_tile(tile_node* node, Transform matrix){
 
 static void app_display(void){
 	// Run jobs to load textures.
-	tina_scheduler_run(SCHED, QUEUE_GFX, true, NULL);
+	tina_scheduler_run(SCHED, QUEUE_GFX, true, 0);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
