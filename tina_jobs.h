@@ -59,6 +59,10 @@ typedef struct {
 // Counter used to signal when a group of jobs is done.
 // Note: Must be zero-initialized before use.
 struct tina_group {
+	// The maximum number of jobs that can be added to the group, or 0 for no limit.
+	unsigned max_count;
+	
+	// Private:
 	tina_job* _job;
 	unsigned _count;
 };
@@ -87,9 +91,8 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 void tina_scheduler_pause(tina_scheduler* sched);
 
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
-void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
-// Add jobs to the scheduler, but don't allow more than 'max_count' jobs in 'group'. Returns the number of jobs added.
-size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_count);
+// Returns the number of jobs added which may be less than 'count' based on 'max_count' of 'group'.
+unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -100,13 +103,11 @@ void tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
 void tina_job_abort(tina_job* job);
 
-// NOTE: tina_job_yield() and tina_job_abort() must be called from within the actual job.
-// Very bad, stack corrupting things will happen if you call it from the outside.
-
 // Convenience method. Enqueue a single job.
-static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned queue_idx, tina_group* group){
+// Returns 0 if the group is already full (max_count) and the job was not added.
+static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned queue_idx, tina_group* group){
 	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .queue_idx = queue_idx};
-	tina_scheduler_enqueue_batch(sched, &desc, 1, group);
+	return tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }
 // Convenience method. Enqueue some jobs and wait for them all to finish.
 void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job);
@@ -346,10 +347,9 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 						if(group && --group->_count == 0 && group->_job){
 							// Push the waiting job to the front of it's queue.
 							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
-							queue->arr[--queue->tail & queue->mask] = group->_job;
+							queue->arr[queue->head++ & queue->mask] = group->_job;
 							queue->count++;
 							_tina_queue_signal(queue);
-							// TODO is pushing it to the front the best thing to do?
 						}
 					} break;
 					case _TINA_STATUS_YIELDING:{
@@ -385,42 +385,32 @@ void tina_scheduler_pause(tina_scheduler* sched){
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
-static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
-	if(group) group->_count += count;
-	
-	_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
-	for(size_t i = 0; i < count; i++){
-		_TINA_ASSERT(list[i].func, "Tina Jobs Error: Job must have a body function.");
-		_TINA_ASSERT(list[i].queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
-		
-		// Pop a job from the pool.
-		tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-		(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_id = 0, .group = group};
-		
-		// Push it to the proper queue.
-		_tina_queue* queue = &sched->_queues[list[i].queue_idx];
-		queue->arr[queue->head++ & queue->mask] = job;
-		queue->count++;
-		_tina_queue_signal(queue);
-	}
-}
-
-void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group){
+unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group){
 	_TINA_MUTEX_LOCK(sched->_lock); {
-		_tina_scheduler_enqueue_batch_nolock(sched, list, count, group);
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
-}
-
-size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_count){
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		if(group->_count < max_count){
+		if(group){
 			// Adjust count if necessary.
-			size_t allowed = max_count - group->_count;
-			if(count > allowed) count = allowed;
-			_tina_scheduler_enqueue_batch_nolock(sched, list, count, group);
-		} else {
-			// Group is already full. Can't enqueue any jobs.
-			count = 0;
+			if(group->max_count){
+				size_t remaining = group->max_count - group->_count;
+				if(count > remaining) count = remaining;
+			}
+			
+			group->_count += count;
+		}
+		
+		_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
+		for(size_t i = 0; i < count; i++){
+			_TINA_ASSERT(list[i].func, "Tina Jobs Error: Job must have a body function.");
+			_TINA_ASSERT(list[i].queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
+			
+			// Pop a job from the pool.
+			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
+			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_id = 0, .group = group};
+			
+			// Push it to the proper queue.
+			_tina_queue* queue = &sched->_queues[list[i].queue_idx];
+			queue->arr[queue->head++ & queue->mask] = job;
+			queue->count++;
+			_tina_queue_signal(queue);
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 	

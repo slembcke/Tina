@@ -380,9 +380,9 @@ static void visit_tile(tile_node* node, Transform matrix){
 			.node = node,
 		};
 		
-		unsigned count = tina_scheduler_enqueue_throttled(SCHED, (tina_job_description[]){
+		unsigned count = tina_scheduler_enqueue_batch(SCHED, (tina_job_description[]){
 			{.name = "GenTiles", .func = generate_tile_job, .user_data = generate_ctx, .queue_idx = queue_idx}
-		}, 1, &JOB_THROTTLE[queue_idx], 4);
+		}, 1, &JOB_THROTTLE[queue_idx]);
 		
 		// If the task was added, mark the node as requested.
 		if(count > 0) node->requested = true;
@@ -469,6 +469,11 @@ static void app_init(void){
 	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MHI_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MHI_PRIORITY, QUEUE_MLO_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MLO_PRIORITY, QUEUE_LO_PRIORITY);
+	
+	JOB_THROTTLE[QUEUE_HI_PRIORITY].max_count = 8;
+	JOB_THROTTLE[QUEUE_MHI_PRIORITY].max_count = 8;
+	JOB_THROTTLE[QUEUE_MLO_PRIORITY].max_count = 8;
+	JOB_THROTTLE[QUEUE_LO_PRIORITY].max_count = 8;
 	
 	common_start_worker_threads(0, SCHED, QUEUE_HI_PRIORITY);
 	
