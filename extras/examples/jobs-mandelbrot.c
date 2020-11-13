@@ -137,11 +137,11 @@ typedef struct {
 #define SAMPLE_BATCH_COUNT 256
 
 // Task function that renders mandelbrot samples.
-static void render_samples_job(tina_job* job, void* user_data, unsigned* thread_id){
+static void render_samples_job(tina_job* job){
 	const unsigned maxi = 32*1024;
 	const double bailout = 256;
 	
-	const render_scanline_ctx* const ctx = user_data;
+	const render_scanline_ctx* const ctx = tina_job_get_description(job).user_data;
 	
 	// Check if the request is valid since waiting in the queue.
 	if(!ctx->valid) return;
@@ -182,8 +182,8 @@ static void render_samples_job(tina_job* job, void* user_data, unsigned* thread_
 }
 
 // Task function that renders mandelbrot image tiles.
-static void generate_tile_job(tina_job* job, void* user_data, unsigned* thread_id){
-	generate_tile_ctx *ctx = user_data;
+static void generate_tile_job(tina_job* job){
+	generate_tile_ctx *ctx = tina_job_get_description(job).user_data;
 	
 	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
@@ -237,7 +237,7 @@ static void generate_tile_job(tina_job* job, void* user_data, unsigned* thread_i
 					// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
 					// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
 					tina_job_wait(job, &tile_throttle, common_worker_count());
-					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, ctx->queue_idx, &tile_throttle);
+					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
 					
 					batch_cursor++;
 				}
@@ -380,7 +380,7 @@ static void visit_tile(tile_node* node, Transform matrix){
 			.node = node,
 		};
 		
-		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_THROTTLE[queue_idx])){
+		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, 0, queue_idx, &JOB_THROTTLE[queue_idx])){
 			// The node was successfully queued, so mark it as requested.
 			node->requested = true;
 		}

@@ -12,11 +12,11 @@
 tina_scheduler* SCHED;
 atomic_uint COUNT;
 
-static void task_increment(tina_job* task, void* user_data, unsigned* thread_id){
+static void task_increment(tina_job* task){
 	atomic_fetch_add(&COUNT, 1);
 }
 
-static void task_more_tasks(tina_job* task, void* user_data, unsigned* thread_id){
+static void task_more_tasks(tina_job* task){
 	tina_scheduler_enqueue_batch(SCHED, (tina_job_description[]){
 		// Make a bunch of tasks to increment the counter.
 		{.func = task_increment},
@@ -49,7 +49,7 @@ int main(int argc, const char *argv[]){
 	
 	// Seed the first 16 tasks into the system.
 	for(unsigned i = 0; i < 16; i++){
-		tina_scheduler_enqueue(SCHED, NULL, task_more_tasks, NULL, 0, NULL);
+		tina_scheduler_enqueue(SCHED, NULL, task_more_tasks, NULL, 0, 0, NULL);
 	}
 	
 	puts("waiting");

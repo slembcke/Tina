@@ -41,20 +41,25 @@ typedef struct tina_group tina_group;
 
 // Job function prototype.
 // 'job' is a reference to the job to use with the yield/switch/abort functions.
-// 'user_data' is the pointer you supplied when creating the job.
-// 'thread_id' is a pointer to the thread id the job is running on. Don't cache the id as it changes when the job yields.
-typedef void tina_job_func(tina_job* job, void* user_data, unsigned* thread_id);
+typedef void tina_job_func(tina_job* job);
 
 typedef struct {
 	// Job name. (optional)
 	const char* name;
 	// Job body function.
 	tina_job_func* func;
-	// Job context pointer. (optional)
+	// User defined job context pointer. (optional)
 	void* user_data;
+	// User defined job index. (optional)
+	unsigned user_idx;
 	// Index of the queue to run the job on.
 	unsigned queue_idx;
 } tina_job_description;
+
+// Get the description for a job.
+tina_job_description tina_job_get_description(tina_job* job);
+// Get the thread id this job is currently running on.
+unsigned tina_job_get_thread_id(tina_job* job);
 
 // Counter used to signal when a group of jobs is done.
 // Note: Must be zero-initialized before use.
@@ -105,8 +110,8 @@ void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
 // Returns 0 if the group is already full (max_count) and the job was not added.
-static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned queue_idx, tina_group* group){
-	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .queue_idx = queue_idx};
+static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned user_idx, unsigned queue_idx, tina_group* group){
+	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
 	return tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }
 // Convenience method. Enqueue some jobs and wait for them all to finish.
@@ -141,6 +146,9 @@ struct tina_job {
 	unsigned thread_id;
 	tina_group* group;
 };
+
+tina_job_description tina_job_get_description(tina_job* job){return job->desc;}
+unsigned tina_job_get_thread_id(tina_job* job){return job->thread_id;}
 
 typedef struct {
 	void** arr;
@@ -187,7 +195,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 		// Unlock the mutex while executing a job.
 		_TINA_MUTEX_UNLOCK(sched->_lock); {
 			tina_job* job = (tina_job*)value;
-			job->desc.func(job, job->desc.user_data, &job->thread_id);
+			job->desc.func(job);
 		} _TINA_MUTEX_LOCK(sched->_lock);
 		
 		// Yield the completed status back to the scheduler, and recieve the next job.
