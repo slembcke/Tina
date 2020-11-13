@@ -111,10 +111,6 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 // Convenience method. Enqueue some jobs and wait for them all to finish.
 void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job);
 
-// Like 'tina_job_wait()' but for external threads. Blocks the current thread until the threshold is satisfied.
-// Don't run this from a job! It will block the runner thread and probably cause a deadlock.
-void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsigned threshold);
-
 
 #ifdef TINA_JOBS_IMPLEMENTATION
 
@@ -476,36 +472,6 @@ void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list
 	tina_group group = {};
 	tina_scheduler_enqueue_batch(sched, list, count, &group);
 	tina_job_wait(job, &group, 0);
-}
-
-typedef struct {
-	tina_group* group;
-	unsigned threshold;
-	_TINA_COND_T wakeup;
-} _tina_wakeup_ctx;
-
-static void _tina_scheduler_sleep_wakeup(tina_job* job, void* user_data, unsigned* thread_id){
-	_tina_wakeup_ctx* ctx = (_tina_wakeup_ctx*)user_data;
-	tina_job_wait(job, ctx->group, ctx->threshold);
-	
-	_TINA_MUTEX_LOCK(job->scheduler->_lock); {
-		_TINA_COND_SIGNAL(ctx->wakeup);
-	} _TINA_MUTEX_UNLOCK(job->scheduler->_lock);
-}
-
-void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsigned threshold){
-	_tina_wakeup_ctx ctx;
-	ctx.group = group;
-	ctx.threshold = threshold;
-	_TINA_COND_INIT(ctx.wakeup);
-	
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		tina_job_description desc = {.name = "_tina_scheduler_sleep_wakeup()", .func = _tina_scheduler_sleep_wakeup, .user_data = &ctx, .queue_idx = 0};
-		_tina_scheduler_enqueue_batch_nolock(sched, &desc, 1, NULL);
-		_TINA_COND_WAIT(ctx.wakeup, sched->_lock);
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
-	
-	_TINA_COND_DESTROY(ctx.wakeup);
 }
 
 #endif // TINA_JOB_IMPLEMENTATION
