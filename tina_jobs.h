@@ -53,15 +53,14 @@ typedef struct {
 	// Job context pointer. (optional)
 	void* user_data;
 	// Index of the queue to run the job on.
-	uint8_t queue_idx;
+	unsigned queue_idx;
 } tina_job_description;
 
 // Counter used to signal when a group of jobs is done.
-// Can be allocated anywhere (stack, in an object, etc), and does not need to be freed.
+// Note: Must be zero-initialized before use.
 struct tina_group {
 	tina_job* _job;
-	uint32_t _count;
-	uint32_t _magic;
+	unsigned _count;
 };
 
 // Get the allocation size for a jobs instance.
@@ -87,13 +86,10 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 // Pause execution of jobs on all threads as soon as their current jobs finish.
 void tina_scheduler_pause(tina_scheduler* sched);
 
-// Groups must be initialized before use.
-void tina_group_init(tina_group* group);
-
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
-void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group);
+void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
 // Add jobs to the scheduler, but don't allow more than 'max_count' jobs in 'group'. Returns the number of jobs added.
-size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group, size_t max_count);
+size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_count);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -109,11 +105,11 @@ void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
 static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned queue_idx, tina_group* group){
-	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .queue_idx = (uint8_t)queue_idx};
+	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .queue_idx = queue_idx};
 	tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }
 // Convenience method. Enqueue some jobs and wait for them all to finish.
-void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_job* job);
+void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job);
 
 // Like 'tina_job_wait()' but for external threads. Blocks the current thread until the threshold is satisfied.
 // Don't run this from a job! It will block the runner thread and probably cause a deadlock.
@@ -351,7 +347,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 						
 						// Did it have a group, and was it the last job being waited for?
 						tina_group* group = job->group;
-						if(group && --group->_count == 0){
+						if(group && --group->_count == 0 && group->_job){
 							// Push the waiting job to the front of it's queue.
 							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
 							queue->arr[--queue->tail & queue->mask] = group->_job;
@@ -393,16 +389,8 @@ void tina_scheduler_pause(tina_scheduler* sched){
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
-void tina_group_init(tina_group* group){
-	// Count is initailized to 1 because tina_job_wait() also decrements the count for symmetry reasons.
-	(*group) = (tina_group){._job = NULL, ._count = 1, ._magic = _TINA_MAGIC};
-}
-
 static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
-	if(group){
-		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Jobs Error: Group is corrupt or uninitialized");
-		group->_count += count;
-	}
+	if(group) group->_count += count;
 	
 	_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
 	for(size_t i = 0; i < count; i++){
@@ -421,13 +409,13 @@ static void _tina_scheduler_enqueue_batch_nolock(tina_scheduler* sched, const ti
 	}
 }
 
-void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group){
+void tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group){
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		_tina_scheduler_enqueue_batch_nolock(sched, list, count, group);
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
-size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_group* group, size_t max_count){
+size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_count){
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		if(group->_count < max_count){
 			// Adjust count if necessary.
@@ -446,11 +434,10 @@ size_t tina_scheduler_enqueue_throttled(tina_scheduler* sched, const tina_job_de
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 	tina_scheduler* sched = job->scheduler;
 	_TINA_MUTEX_LOCK(sched->_lock); {
-		_TINA_ASSERT(group->_magic == _TINA_MAGIC, "Tina Jobs Error: Group is corrupt or uninitialized");
 		group->_job = job;
 		
 		// Check if we need to wait at all.
-		if(--group->_count > threshold){
+		if(group->_count > threshold){
 			group->_count -= threshold;
 			// Yield until the counter hits zero.
 			tina_yield(group->_job->fiber, _TINA_STATUS_WAITING);
@@ -459,7 +446,6 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		}
 		
 		// Make the group ready to use again.
-		group->_count++;
 		group->_job = NULL;
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
@@ -486,8 +472,8 @@ void tina_job_abort(tina_job* job){
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
-void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, size_t count, tina_job* job){
-	tina_group group; tina_group_init(&group);
+void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job){
+	tina_group group = {};
 	tina_scheduler_enqueue_batch(sched, list, count, &group);
 	tina_job_wait(job, &group, 0);
 }

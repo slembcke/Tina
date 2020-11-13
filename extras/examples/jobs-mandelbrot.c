@@ -198,7 +198,7 @@ static void generate_tile_job(tina_job* job, void* user_data, unsigned* thread_i
 	float* b_samples = malloc(sample_count*sizeof(float));
 	
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
-	tina_group tile_throttle; tina_group_init(&tile_throttle);
+	tina_group tile_throttle = {};
 	
 	// OK! Now for the exciting part!
 	// Loop through all the pixels and subsamples (for anti-aliasing).
@@ -469,8 +469,6 @@ static void app_init(void){
 	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MHI_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MHI_PRIORITY, QUEUE_MLO_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MLO_PRIORITY, QUEUE_LO_PRIORITY);
-	
-	for(unsigned i = 0; i < _QUEUE_COUNT; i++) tina_group_init(&JOB_THROTTLE[i]);
 	
 	common_start_worker_threads(0, SCHED, QUEUE_HI_PRIORITY);
 	
