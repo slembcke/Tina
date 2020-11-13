@@ -151,7 +151,7 @@ typedef struct {
 typedef struct _tina_queue _tina_queue;
 struct _tina_queue{
 	void** arr;
-	size_t head, tail, count, mask;
+	size_t head, tail, mask;
 	
 	// Previous queue in a priority chain used to locate the root queue used for signaling.
 	_tina_queue* prev;
@@ -297,8 +297,7 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 
 static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
 	do {
-		if(queue->count > 0){
-			queue->count--;
+		if(queue->head != queue->tail){
 			return (tina_job*)queue->arr[queue->tail++ & queue->mask];
 		}
 	} while((queue = queue->next));
@@ -348,7 +347,6 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 							// Push the waiting job to the front of it's queue.
 							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
 							queue->arr[queue->head++ & queue->mask] = group->_job;
-							queue->count++;
 							_tina_queue_signal(queue);
 						}
 					} break;
@@ -356,7 +354,6 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 						// Push the job to the back of the queue.
 						_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
 						queue->arr[queue->head++ & queue->mask] = job;
-						queue->count++;
 						_tina_queue_signal(queue);
 					} break;
 					case _TINA_STATUS_WAITING: {
@@ -409,7 +406,6 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			// Push it to the proper queue.
 			_tina_queue* queue = &sched->_queues[list[i].queue_idx];
 			queue->arr[queue->head++ & queue->mask] = job;
-			queue->count++;
 			_tina_queue_signal(queue);
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
