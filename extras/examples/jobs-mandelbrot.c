@@ -380,12 +380,10 @@ static void visit_tile(tile_node* node, Transform matrix){
 			.node = node,
 		};
 		
-		unsigned count = tina_scheduler_enqueue_batch(SCHED, (tina_job_description[]){
-			{.name = "GenTiles", .func = generate_tile_job, .user_data = generate_ctx, .queue_idx = queue_idx}
-		}, 1, &JOB_THROTTLE[queue_idx]);
-		
-		// If the task was added, mark the node as requested.
-		if(count > 0) node->requested = true;
+		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, queue_idx, &JOB_THROTTLE[queue_idx])){
+			// The node was successfully queued, so mark it as requested.
+			node->requested = true;
+		}
 	}
 }
 
