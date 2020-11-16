@@ -57,9 +57,7 @@ typedef struct {
 } tina_job_description;
 
 // Get the description for a job.
-tina_job_description tina_job_get_description(tina_job* job);
-// Get the thread id this job is currently running on.
-unsigned tina_job_get_thread_id(tina_job* job);
+const tina_job_description* tina_job_get_description(tina_job* job);
 
 // Counter used to signal when a group of jobs is done.
 // Note: Must be zero-initialized before use.
@@ -90,8 +88,7 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 // Execute jobs continuously on the current thread.
 // Only returns if tina_scheduler_pause() is called, or if the queue becomes empty and 'flush' is true.
 // You can run this continuously on worker threads or use it to explicitly flush certain queues.
-// 'thread_id' is a user provided id that is passed into jobs running on this thread. Use it for thread local memory pooling, etc.
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, unsigned thread_id);
+void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush);
 // Pause execution of jobs on all threads as soon as their current jobs finish.
 void tina_scheduler_pause(tina_scheduler* sched);
 
@@ -143,12 +140,10 @@ struct tina_job {
 	tina_job_description desc;
 	tina_scheduler* scheduler;
 	tina* fiber;
-	unsigned thread_id;
 	tina_group* group;
 };
 
-tina_job_description tina_job_get_description(tina_job* job){return job->desc;}
-unsigned tina_job_get_thread_id(tina_job* job){return job->thread_id;}
+const tina_job_description* tina_job_get_description(tina_job* job){return &job->desc;}
 
 typedef struct {
 	void** arr;
@@ -321,7 +316,7 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 	} while((queue = queue->prev));
 }
 
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, unsigned thread_id){
+void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush){
 	// Job loop is only unlocked while running a job or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = false;
@@ -336,7 +331,6 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush, u
 				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 				// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
 				if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
-				job->thread_id = thread_id;
 				
 				// Yield to the job's fiber to run it.
 				switch(tina_resume(job->fiber, (uintptr_t)job)){
@@ -409,7 +403,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .thread_id = 0, .group = group};
+			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .group = group};
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = &sched->_queues[list[i].queue_idx];
