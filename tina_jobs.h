@@ -101,7 +101,8 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
 // Yield the current job and reschedule it to run again later.
 void tina_job_yield(tina_job* job);
 // Yield the current job and reschedule it to run on a different queue.
-void tina_job_switch_queue(tina_job* job, unsigned queue_idx);
+// Returns the old queue the job was scheduled on.
+unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
 void tina_job_abort(tina_job* job);
 
@@ -416,8 +417,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 }
 
 void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
-	tina_scheduler* sched = job->scheduler;
-	_TINA_MUTEX_LOCK(sched->_lock); {
+	_TINA_MUTEX_LOCK(job->scheduler->_lock); {
 		group->_job = job;
 		
 		// Check if we need to wait at all.
@@ -431,29 +431,31 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		
 		// Make the group ready to use again.
 		group->_job = NULL;
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
+	} _TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 }
 
 void tina_job_yield(tina_job* job){
-	tina_scheduler* sched = job->scheduler;
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		tina_yield(job->fiber, _TINA_STATUS_YIELDING);
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
+	_TINA_MUTEX_LOCK(job->scheduler->_lock);
+	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 }
 
-void tina_job_switch_queue(tina_job* job, unsigned queue_idx){
-	tina_scheduler* sched = job->scheduler;
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		job->desc.queue_idx = queue_idx;
-		tina_yield(job->fiber, _TINA_STATUS_YIELDING);
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
+unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
+	unsigned old_queue = job->desc.queue_idx;
+	if(queue_idx == old_queue) return queue_idx;
+	
+	_TINA_MUTEX_LOCK(job->scheduler->_lock);
+	job->desc.queue_idx = queue_idx;
+	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
+	
+	return old_queue;
 }
 
 void tina_job_abort(tina_job* job){
-	tina_scheduler* sched = job->scheduler;
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		tina_yield(job->fiber, _TINA_STATUS_ABORTED);
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
+	_TINA_MUTEX_LOCK(job->scheduler->_lock);
+	tina_yield(job->fiber, _TINA_STATUS_ABORTED);
+	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 }
 
 void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job){
