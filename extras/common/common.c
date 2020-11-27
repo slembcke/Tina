@@ -36,7 +36,7 @@ worker_context WORKERS[MAX_WORKERS];
 
 static int common_worker_body(void* data){
 	worker_context* ctx = data;
-	tina_scheduler_run(ctx->sched, ctx->queue_idx, false, ctx->thread_id);
+	tina_scheduler_run(ctx->sched, ctx->queue_idx, false);
 	return 0;
 }
 

@@ -141,7 +141,7 @@ static void render_samples_job(tina_job* job){
 	const unsigned maxi = 32*1024;
 	const double bailout = 256;
 	
-	const render_scanline_ctx* const ctx = tina_job_get_description(job).user_data;
+	const render_scanline_ctx* const ctx = tina_job_get_description(job)->user_data;
 	
 	// Check if the request is valid since waiting in the queue.
 	if(!ctx->valid) return;
@@ -183,7 +183,7 @@ static void render_samples_job(tina_job* job){
 
 // Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job){
-	generate_tile_ctx *ctx = tina_job_get_description(job).user_data;
+	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
 	
 	const unsigned multisample_count = 1;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
@@ -389,7 +389,7 @@ static void visit_tile(tile_node* node, Transform matrix){
 
 static void app_display(void){
 	// Run jobs to load textures.
-	tina_scheduler_run(SCHED, QUEUE_GFX, true, 0);
+	tina_scheduler_run(SCHED, QUEUE_GFX, true);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();

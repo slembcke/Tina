@@ -243,8 +243,12 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	for(unsigned i = 0; i < queue_count; i++){
 		_tina_queue* queue = &sched->_queues[i];
 		queue->arr = (void**)cursor;
+		queue->head = queue->tail = 0;
 		queue->mask = job_count - 1;
+		queue->prev = queue->next = NULL;
 		_TINA_COND_INIT(queue->semaphore_signal);
+		queue->semaphore_count = 0;
+		
 		cursor += _tina_jobs_align(job_count*sizeof(void*));
 	}
 	
@@ -252,6 +256,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	sched->_job_pool.count = job_count;
 	for(unsigned i = 0; i < job_count; i++){
 		sched->_job_pool.arr[i] = cursor;
+		
 		cursor += _tina_jobs_align(sizeof(tina_job));
 	}
 	
@@ -262,6 +267,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 		fiber->name = "TINA JOB FIBER";
 		fiber->user_data = sched;
 		sched->_fibers.arr[i] = fiber;
+		
 		cursor += stack_size;
 	}
 	
