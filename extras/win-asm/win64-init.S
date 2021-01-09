@@ -1,3 +1,25 @@
+/*
+	Copyright (c) 2021 Scott Lembcke
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
 #define ARG0 rcx
 #define ARG1 rdx
 #define ARG2 r8
@@ -35,12 +57,9 @@ _tina_init_stack:
 	mov [ARG2], rsp
 	and ARG3, ~0xF
 	mov rsp, ARG3
-	// https://en.wikipedia.org/wiki/Win32_Thread_Information_Block#Contents_of_the_TIB_on_Windows
-	// https://github.com/wine-mirror/wine/blob/1aff1e6a370ee8c0213a0fd4b220d121da8527aa/include/winternl.h#L271
-	// https://github.com/boostorg/context/tree/develop/src/asm
-	mov gs:0x1478, ARG0 // Deallocation stack (also low address)
-	mov gs:0x10, ARG0 // Stack limit (low address)
-	mov gs:0x8, ARG3 // Stack base (high address)
+	mov gs:0x1478, ARG0
+	mov gs:0x10, ARG0
+	mov gs:0x8, ARG3
 	
 	// Push stack frame sentinel.
 	push 0
