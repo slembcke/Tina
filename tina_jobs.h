@@ -63,6 +63,7 @@ const tina_job_description* tina_job_get_description(tina_job* job);
 // Note: Must be zero-initialized before use.
 struct tina_group {
 	// The maximum number of jobs that can be added to the group, or 0 for no limit.
+	// This makes it easy to throttle the number of jobs added to a scheduler.
 	unsigned max_count;
 	
 	// Private:
@@ -93,7 +94,7 @@ void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush);
 void tina_scheduler_pause(tina_scheduler* sched);
 
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
-// Returns the number of jobs added which may be less than 'count' based on 'max_count' of 'group'.
+// Returns the number of jobs added which may be less than 'count' based on the value of 'group->max_count'.
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
@@ -107,13 +108,11 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
-// Returns 0 if the group is already full (max_count) and the job was not added.
+// Returns 0 if the group is already full (i.e. group->max_count) and the job was not added.
 static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned user_idx, unsigned queue_idx, tina_group* group){
 	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
 	return tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }
-// Convenience method. Enqueue some jobs and wait for them all to finish.
-void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job);
 
 
 #ifdef TINA_JOBS_IMPLEMENTATION
@@ -157,10 +156,10 @@ struct _tina_queue{
 	void** arr;
 	size_t head, tail, mask;
 	
-	// Previous queue in a priority chain used to locate the root queue used for signaling.
-	_tina_queue* prev;
-	// Next queue in a priority chain used as a fallback when this queue is empty.
-	_tina_queue* next;
+	// Higher priority queue in the chain. Used for signaling worker threads.
+	_tina_queue* parent;
+	// Lower priority queue in the chain. Used as a fallback when this queue is empty.
+	_tina_queue* fallback;
 	// Semaphore to wait for more work in this queue.
 	_TINA_COND_T semaphore_signal;
 	unsigned semaphore_count;
@@ -245,7 +244,7 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 		queue->arr = (void**)cursor;
 		queue->head = queue->tail = 0;
 		queue->mask = job_count - 1;
-		queue->prev = queue->next = NULL;
+		queue->parent = queue->fallback = NULL;
 		_TINA_COND_INIT(queue->semaphore_signal);
 		queue->semaphore_count = 0;
 		
@@ -296,13 +295,13 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 	_TINA_ASSERT(fallback_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 	
-	_tina_queue* prev = &sched->_queues[queue_idx];
-	_tina_queue* next = &sched->_queues[fallback_idx];
-	_TINA_ASSERT(prev->next == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
-	_TINA_ASSERT(next->prev == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
+	_tina_queue* parent = &sched->_queues[queue_idx];
+	_tina_queue* fallback = &sched->_queues[fallback_idx];
+	_TINA_ASSERT(parent->fallback == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
+	_TINA_ASSERT(fallback->parent == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
 
-	prev->next = next;
-	next->prev = prev;
+	parent->fallback = fallback;
+	fallback->parent = parent;
 }
 
 static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
@@ -310,7 +309,7 @@ static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
 		if(queue->head != queue->tail){
 			return (tina_job*)queue->arr[queue->tail++ & queue->mask];
 		}
-	} while((queue = queue->next));
+	} while((queue = queue->fallback));
 	return NULL;
 }
 
@@ -319,8 +318,9 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 		if(queue->semaphore_count){
 			_TINA_COND_SIGNAL(queue->semaphore_signal);
 			queue->semaphore_count--;
+			break;
 		}
-	} while((queue = queue->prev));
+	} while((queue = queue->parent));
 }
 
 void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush){
@@ -462,12 +462,6 @@ void tina_job_abort(tina_job* job){
 	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	tina_yield(job->fiber, _TINA_STATUS_ABORTED);
 	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
-}
-
-void tina_scheduler_join(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_job* job){
-	tina_group group = {};
-	tina_scheduler_enqueue_batch(sched, list, count, &group);
-	tina_job_wait(job, &group, 0);
 }
 
 #endif // TINA_JOB_IMPLEMENTATION

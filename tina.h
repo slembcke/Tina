@@ -65,7 +65,7 @@ struct tina {
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
 // Swap between two coroutines symmetrically, passing a value between them.
-// Note: tina_resume() and tina_yield() are for assymetric coroutines. Don't mix the two APIs.
+// Note: tina_resume() and tina_yield() are for assymetric coroutines. Don't mix the two APIs!
 uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 
 // Resume running a coroutine, passing a value to the coroutine.
