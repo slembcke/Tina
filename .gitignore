@@ -6,6 +6,7 @@ a.exe
 *.xxd
 *.exe
 
+.vscode
 extras/examples/coro-simple
 extras/examples/jobs-mandelbrot
 extras/test/cpp-test
