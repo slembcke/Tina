@@ -2,25 +2,26 @@
 Tina is a teeny tiny, header only, coroutine/fiber library!
 
 ## Features:
-* Super simple API: Basically just `init()` and `swap()` for symmetric coroutines
-* Asymmetric coroutines are supported too via `resume()` and `yield()`
+* Super simple API: Basically just `init()`, `resume()` and `yield()` for assymetric coroutines.
+* Fully, symmetric coroutines are supported too.
 * Bring your own memory (or let Tina `malloc()` for you)
 * Fast assembly language implementations
 * Cross platform, supporting several of the most common modern ABIs
-	* System V for amd64 (Unixes and probably PS4)
-	* Win64 (Windows and probably Xbox)
-	* ARM aarch32 and aarch64 (Unixes, and probably iOS / Android / Switch)
+	* System V for amd64: Mac, Linux, BSD, etc (and probably PS4)
+	* Win64: Windows (and probably Xbox)
+	* ARM aarch32 and aarch64: Unixes (and probably Mac / iOS / Android / Switch)
 * Supports GCC / Clang using inline assembly, and MSVC using embedded machine code
-* Minimal assembly footprint to support a new ABI (armv7 is like a dozen instructions)
+* Minimal assembly footprint required to support a new ABI (armv7 is like a dozen instructions)
 * Minimal code footprint. Currently ~200 sloc
 
 ## Limitations:
-* I don't personally care about old or less common ABIs, for example: 32 bit Intel, MIPS, etc. (Pull requests welcome)
+* I don't personally care about obsolete or uncommon ABIs, for example: 32 bit x86, MIPS, etc. (Pull requests welcome)
 * No WASM support: The stack is private and hidden by the WASM runtime so it's not possible to make stackful coroutines.
+* No RISCV support... yet. ;) (Pull requests welcome)
 * Minimal stack overflow detection: Bring your own memory means you need to bring your own guard pages and security.
 
 # Tina Jobs
-Tina Jobs is a fiber based job system built on top of Tina. (Based on the ideas here: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine)
+Tina Jobs is a simple fiber based job system built on top of Tina. (Based on the ideas here: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine)
 
 ## Features:
 * Pretty simple API: Basically just `init()`, `equeue()`, and `wait()`

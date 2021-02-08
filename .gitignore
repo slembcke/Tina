@@ -8,6 +8,7 @@ a.exe
 
 .vscode
 extras/examples/coro-simple
+extras/examples/coro-symmetric
 extras/examples/jobs-mandelbrot
 extras/test/cpp-test
 extras/test/jobs-throughput
