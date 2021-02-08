@@ -22,6 +22,7 @@ TESTS = \
 
 EXAMPLES = \
 	examples/coro-simple \
+	examples/coro-symmetric \
 	examples/jobs-mandelbrot \
 
 default: $(TESTS) test/cpp-test $(EXAMPLES)
