@@ -98,7 +98,7 @@ void tina_scheduler_pause(tina_scheduler* sched);
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
 // Yield the current job until the group has 'threshold' or less remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
-void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
+unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
 // Yield the current job and reschedule it to run again later.
 void tina_job_yield(tina_job* job);
 // Yield the current job and reschedule it to run on a different queue.
@@ -422,8 +422,8 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 	return count;
 }
 
-void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
-	_TINA_MUTEX_LOCK(job->scheduler->_lock); {
+unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
+	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 		group->_job = job;
 		
 		// Check if we need to wait at all.
@@ -437,7 +437,12 @@ void tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		
 		// Make the group ready to use again.
 		group->_job = NULL;
-	} _TINA_MUTEX_UNLOCK(job->scheduler->_lock);
+		
+		// Save the remaining count to return it.
+		unsigned remaining = group->_count;
+	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
+	
+	return remaining;
 }
 
 void tina_job_yield(tina_job* job){

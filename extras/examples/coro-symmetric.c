@@ -33,6 +33,7 @@ int main(void){
 	// This doesn't allocate anything, Tina just needs somewhere to store the thread's context.
 	tina dummy_coro;
 	coro_main = tina_init_dummy(&dummy_coro);
+	// NOTE: 'tina_init_dummy()' returns the pointer passed to it after initializing it as a convenience.
 	
 	// Create the other coroutines.
 	coro_a = tina_init(NULL, 64*1024, body_a, NULL);
