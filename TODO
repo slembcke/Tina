@@ -1,0 +1,5 @@
+Ideas:
+* Should flushing a queue include waiting tasks?
+	* Doesn't play nice with runloop style jobs
+	* Does handle parking the main thread nicely on a "done" variable
+* Multiple waiting jobs on a group via a sorted linked list

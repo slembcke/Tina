@@ -38,27 +38,56 @@ enum {
 };
 
 tina_scheduler* SCHED;
-int COUNT = 0;
 
-static void dummy_job(tina_job* job){
-	// thrd_sleep(&(struct timespec){.tv_nsec = 1000000}, NULL);
-	tina_job_switch_queue(job, QUEUE_MAIN);
-	COUNT++;
+static void wait_countdown_sync(tina_job* job){
+	unsigned* counter = tina_job_get_description(job)->user_data;
+	unsigned idx = tina_job_get_description(job)->user_idx;
+	
+	// Let 2 tasks run each time the main job yields.
+	while(*counter > idx + 2) tina_job_yield(job);
 }
 
-static void make_and_wait_for_jobs(tina_job* job){
+static void test_wait_countdown_sync(tina_job* job){
+	unsigned counter = 64;
 	tina_group group;
 	
-	for(int i = 0; i < 512; i++){
-		tina_scheduler_enqueue(SCHED, NULL, dummy_job, NULL, 0, QUEUE_WORK, &group);
-		tina_job_wait(job, &group, 16);
+	// Run sub-jobs on the main queue so we can yield them 2 at a time.
+	for(unsigned i = 0; i < counter; i++){
+		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_sync, &counter, i, QUEUE_MAIN, &group);
 	}
 	
-	unsigned foo = -1;
-	while(foo){
-		printf("foo: %d\n", foo);
-		foo = tina_job_wait(job, &group, foo - 1);
+	while(counter){
+		unsigned expected = counter - 2;
+		counter = tina_job_wait(job, &group, counter - 1);
+		assert(counter == expected);
 	}
+	
+	puts("test_wait_countdown_sync() success");
+}
+
+static void wait_countdown_async(tina_job* job){
+	thrd_yield();
+}
+
+static void test_wait_countdown_async(tina_job* job){
+	unsigned counter = 1000;
+	tina_group group;
+	
+	for(unsigned i = 0; i < counter; i++){
+		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_async, &counter, i, QUEUE_WORK, &group);
+	}
+	
+	while(counter){
+		unsigned expected = counter - 1;
+		counter = tina_job_wait(job, &group, counter - 1);
+		assert(counter <= expected);
+	}
+	puts("test_wait_countdown_async() success");
+}
+
+static void run_tests(tina_job* job){
+	test_wait_countdown_sync(job);
+	test_wait_countdown_async(job);
 	
 	bool* done = tina_job_get_description(job)->user_data;
 	*done = true;
@@ -69,13 +98,12 @@ int main(int argc, const char *argv[]){
 	common_start_worker_threads(1, SCHED, QUEUE_WORK);
 	
 	bool done = false;
-	tina_scheduler_enqueue(SCHED, NULL, make_and_wait_for_jobs, &done, 0, QUEUE_MAIN, NULL);
+	tina_scheduler_enqueue(SCHED, NULL, run_tests, &done, 0, QUEUE_MAIN, NULL);
 	
 	while(!done) tina_scheduler_run(SCHED, QUEUE_MAIN, true);
 	
 	tina_scheduler_pause(SCHED);
 	common_destroy_worker_threads();
 	
-	printf("done %d\n", COUNT);
 	return EXIT_SUCCESS;
 }
