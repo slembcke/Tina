@@ -207,7 +207,7 @@ static void render_samples_job(tina_job* job){
 static void generate_tile_job(tina_job* job){
 	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
 	
-	const unsigned multisample_count = 1;
+	const unsigned multisample_count = 4;
 	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
 
@@ -507,7 +507,7 @@ static void app_init(void){
 			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
 			.pixel_format = SG_PIXELFORMAT_RGBA8,
 			.min_filter = SG_FILTER_LINEAR,
-			.mag_filter = SG_FILTER_LINEAR,
+			.mag_filter = SG_FILTER_NEAREST,
 			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
 			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
 			.usage = SG_USAGE_DYNAMIC,

@@ -12,3 +12,4 @@ extras/examples/coro-symmetric
 extras/examples/jobs-mandelbrot
 extras/test/cpp-test
 extras/test/jobs-throughput
+extras/test/jobs-wait
