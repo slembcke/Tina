@@ -343,6 +343,7 @@ static void generate_tile_job(tina_job* job){
 #define VIEW_RESET (Transform){0.75, 0, 0, 0.75, 0.5, 0}
 static Transform proj_matrix = {1, 0, 0, 1, 0, 0};
 static Transform view_matrix = VIEW_RESET;
+double zoom = 0;
 
 static Transform pixel_to_world_matrix(void){
 	Transform pixel_to_clip = TransformOrtho(0, sapp_width(), sapp_height(), 0);
@@ -372,10 +373,10 @@ static void draw_tile(tile_node* node){
 	
 	sgl_texture(node->texture);
 	sgl_begin_triangle_strip();
-		sgl_v2f_t2f(v00.x, v00.y, -1, -1);
-		sgl_v2f_t2f(v10.x, v10.y,  1, -1);
-		sgl_v2f_t2f(v01.x, v01.y, -1,  1);
-		sgl_v2f_t2f(v11.x, v11.y,  1,  1);
+		sgl_v2f_t2f(v00.x, v00.y, 0, 0);
+		sgl_v2f_t2f(v10.x, v10.y, 1, 0);
+		sgl_v2f_t2f(v01.x, v01.y, 0, 1);
+		sgl_v2f_t2f(v11.x, v11.y, 1, 1);
 	sgl_end();
 }
 
@@ -454,13 +455,11 @@ static void app_display(void){
 	sgl_matrix_mode_projection();
 	sgl_load_matrix(TransformToGL(proj_matrix).m);
 	
-	sgl_matrix_mode_texture();
-	sgl_load_matrix((float[]){
-		0.5, 0.0, 0, 0,
-		0.0, 0.5, 0, 0,
-		0.0, 0.0, 1, 0,
-		0.5, 0.5, 0, 1,
-	});
+	float scale = exp2(-zoom/16);
+	zoom *= 1 - exp2(-3);
+	Vec2 mpos = TransformPoint(pixel_to_world_matrix(), mouse_pos);
+	Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
+	view_matrix = TransformMult(view_matrix, t);
 	
 	visit_tile(&TREE_ROOT);
 	sgl_draw();
@@ -496,10 +495,7 @@ static void app_event(const sapp_event *event){
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_SCROLL: {
-			float scale = exp(-0.25*event->scroll_y);
-			Vec2 mpos = TransformPoint(pixel_to_world_matrix(), mouse_pos);
-			Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
-			view_matrix = TransformMult(view_matrix, t);
+			zoom += event->scroll_y;
 		} break;
 		
 		default: break;
@@ -532,7 +528,7 @@ static void app_init(void){
 			.width = TEXTURE_SIZE, .height = TEXTURE_SIZE,
 			.pixel_format = SG_PIXELFORMAT_RGBA8,
 			.min_filter = SG_FILTER_LINEAR,
-			.mag_filter = SG_FILTER_NEAREST,
+			.mag_filter = SG_FILTER_LINEAR,
 			.wrap_u = SG_WRAP_CLAMP_TO_EDGE,
 			.wrap_v = SG_WRAP_CLAMP_TO_EDGE,
 			.usage = SG_USAGE_DYNAMIC,
