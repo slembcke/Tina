@@ -41,10 +41,7 @@
 
 enum {
 	// Used as concurrent priority queues for rendering tiles.
-	QUEUE_LO_PRIORITY,
-	QUEUE_MLO_PRIORITY,
-	QUEUE_MHI_PRIORITY,
-	QUEUE_HI_PRIORITY,
+	QUEUE_WORK,
 	// A serial queue used to upload new textures.
 	QUEUE_GFX,
 	QUEUE_GFX_WAIT,
@@ -52,8 +49,6 @@ enum {
 };
 
 tina_scheduler* SCHED;
-// We'll use this to throttle how quickly we add new rendering tasks to the system.
-tina_group JOB_THROTTLE[_QUEUE_COUNT];
 
 // A bunch of random 2D affine matrix code I pulled from another project.
 
@@ -368,8 +363,21 @@ static void draw_tile(tile_node* node){
 	sgl_end();
 }
 
+#define REQUEST_QUEUE_LENGTH 8
+
+static void request_insert(tile_node** request_queue, tile_node* node){
+	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
+		tile_node* requested = request_queue[i];
+		if(!requested || node->coord.z < requested->coord.z){
+			request_queue[i] = node;
+			node = requested;
+			if(!node) break;
+		}
+	}
+}
+
 // Visit the image tile quadtree, recursively rendering and loading new nodes.
-static bool visit_tile(tile_node* node){
+static bool visit_tile(tile_node* node, tile_node** request_queue){
 	Transform matrix = coord_to_matrix(node->coord);
 	// Check if this tile is visible on the screen before continuing.
 	Transform mv_matrix = TransformMult(view_matrix, matrix);
@@ -395,25 +403,17 @@ static bool visit_tile(tile_node* node){
 			}
 			
 			// Visit all of the children.
-			child_coverage += visit_tile(node->children + 0);
-			child_coverage += visit_tile(node->children + 1);
-			child_coverage += visit_tile(node->children + 2);
-			child_coverage += visit_tile(node->children + 3);
+			child_coverage += visit_tile(node->children + 0, request_queue);
+			child_coverage += visit_tile(node->children + 1, request_queue);
+			child_coverage += visit_tile(node->children + 2, request_queue);
+			child_coverage += visit_tile(node->children + 3, request_queue);
 		}
 		
 		if(child_coverage < 4) draw_tile(node);
 		
 		return node->complete;
 	} else if(!node->requested){
-		// This node is visible on screen, but it's texture has never been requested.
-		
-		// Mediocre hueristic to encourage low resolution tiles to load first.
-		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/256) + 1, QUEUE_HI_PRIORITY));
-			
-		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, node, 0, queue_idx, &JOB_THROTTLE[queue_idx])){
-			// The node was successfully queued, so mark it as requested.
-			node->requested = true;
-		}
+		request_insert(request_queue, node);
 	}
 	
 	return false;
@@ -442,7 +442,17 @@ static void app_display(void){
 	Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 	view_matrix = TransformMult(view_matrix, t);
 	
-	visit_tile(&TREE_ROOT);
+	tile_node* request_queue[REQUEST_QUEUE_LENGTH] = {};
+	visit_tile(&TREE_ROOT, request_queue);
+	
+	static tina_group tile_throttle_group = {.max_count = 8};
+	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
+		if(request_queue[i] && tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, request_queue[i], 0, QUEUE_WORK, &tile_throttle_group)){
+			// The node was successfully queued, so mark it as requested.
+			request_queue[i]->requested = true;
+		}
+	}
+	
 	sgl_draw();
 	sg_end_pass();
 	sg_commit();
@@ -488,16 +498,8 @@ static void app_init(void){
 	
 	puts("Creating SCHED.");
 	SCHED = tina_scheduler_new(16*1024, _QUEUE_COUNT, 128, 64*1024);
-	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MHI_PRIORITY);
-	tina_scheduler_queue_priority(SCHED, QUEUE_MHI_PRIORITY, QUEUE_MLO_PRIORITY);
-	tina_scheduler_queue_priority(SCHED, QUEUE_MLO_PRIORITY, QUEUE_LO_PRIORITY);
 	
-	JOB_THROTTLE[QUEUE_HI_PRIORITY].max_count = 8;
-	JOB_THROTTLE[QUEUE_MHI_PRIORITY].max_count = 8;
-	JOB_THROTTLE[QUEUE_MLO_PRIORITY].max_count = 8;
-	JOB_THROTTLE[QUEUE_LO_PRIORITY].max_count = 8;
-	
-	common_start_worker_threads(0, SCHED, QUEUE_HI_PRIORITY);
+	common_start_worker_threads(0, SCHED, QUEUE_WORK);
 	
 	puts("Init Sokol-GFX.");
 	sg_desc gfx_desc = {.image_pool_size = TEXTURE_CACHE_SIZE + 1};

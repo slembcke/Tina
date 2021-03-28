@@ -64,7 +64,7 @@ const tina_job_description* tina_job_get_description(tina_job* job);
 struct tina_group {
 	// The maximum number of jobs that can be added to the group, or 0 for no limit.
 	// This makes it easy to throttle the number of jobs added to a scheduler.
-	unsigned max_count;
+	const unsigned max_count;
 	
 	// Private:
 	tina_job* _job;
