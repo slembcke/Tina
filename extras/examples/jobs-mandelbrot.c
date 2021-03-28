@@ -153,14 +153,6 @@ tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
 unsigned TEXTURE_TIMESTAMP[TEXTURE_CACHE_SIZE];
 
-// Context for the task to render new image tiles.
-typedef struct {
-	// Which queue (priority) this request belongs to.
-	unsigned queue_idx;
-	// The node the request will be assigned to.
-	tile_node* node;
-} generate_tile_ctx;
-
 // Context for the task to render sample batches.
 typedef struct {
 	bool* valid;
@@ -221,7 +213,7 @@ static void render_samples_job(tina_job* job){
 		}
 	}
 	
-	// Resolve
+	// Resolve. (TODO need to move this to the GFX queue to get rid of flickering?)
 	uint8_t* pixels = ctx->pixels;
 	for(unsigned src_idx = 0; src_idx < SAMPLE_BATCH_COUNT; src_idx++){
 		float dither = 0;
@@ -250,7 +242,8 @@ static void update_tile_texture(tina_job* job, unsigned tex_id, void* pixels){
 
 // Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job){
-	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
+	tile_node *node = tina_job_get_description(job)->user_data;
+	unsigned queue = tina_job_get_description(job)->queue_idx;
 	
 	const unsigned sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
 	const unsigned batch_count = sample_count/SAMPLE_BATCH_COUNT;
@@ -262,9 +255,9 @@ static void generate_tile_job(tina_job* job){
 	uint8_t* pixels = calloc(4, TEXTURE_SIZE*TEXTURE_SIZE);
 	
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
-	tina_group tile_throttle = {};
+	tina_group group = {};
 	
-	tile_coord c = ctx->node->coord;
+	tile_coord c = node->coord;
 	double scale = coord_to_scale(c)/TEXTURE_SIZE;
 	c.x *= TEXTURE_SIZE;
 	c.y *= TEXTURE_SIZE;
@@ -278,24 +271,14 @@ static void generate_tile_job(tina_job* job){
 			coords[sample_cursor++] = (c.x + x)*scale + (c.y + y)*scale*I;
 		}
 		
-		// Check if this tile is already stale and bailout.
-		if(ctx->node->timestamp + 16 < TIMESTAMP){
-			ctx->node->requested = false;
-			goto cleanup;
-		}
-		
 		render_scanline_ctx* rctx = &render_contexts[batch_cursor];
 		(*rctx) = (render_scanline_ctx){
-			.valid = &ctx->node->requested,
+			.valid = &node->requested,
 			.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
 			.pixels = pixels + 4*batch_cursor*SAMPLE_BATCH_COUNT,
 		};
 		
-		// // Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
-		// // This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
-		// tina_job_wait(job, &tile_throttle, common_worker_count());
-		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
-		
+		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, queue, &group);
 		batch_cursor++;
 	}
 	
@@ -318,24 +301,29 @@ static void generate_tile_job(tina_job* job){
 	update_tile_texture(job, tex_id, pixels);
 	
 	// Link it to our node.
-	TEXTURE_NODE[tex_id] = ctx->node;
-	ctx->node->texture = TEXTURE_CACHE[tex_id];
+	TEXTURE_NODE[tex_id] = node;
+	node->texture = TEXTURE_CACHE[tex_id];
 	
 	while(batch_cursor){
-		batch_cursor = tina_job_wait(job, &tile_throttle, batch_cursor - 1);
+		// Check if this tile is already stale and bailout.
+		if(node->timestamp + 16 < TIMESTAMP){
+			node->requested = false;
+			goto cleanup;
+		}
+		
+		batch_cursor = tina_job_wait(job, &group, batch_cursor - 1);
 		update_tile_texture(job, tex_id, pixels);
 	}
 	
 	update_tile_texture(job, tex_id, pixels);
-	ctx->node->requested = false;
-	ctx->node->complete = true;
+	node->requested = false;
+	node->complete = true;
 	free(pixels);
 	
 	cleanup:
 	// If we aborted because this was a stale tile, wait for all batches to finish before freeing their memory!
-	tina_job_wait(job, &tile_throttle, 0);
+	tina_job_wait(job, &group, 0);
 	
-	free(ctx);
 	free(render_contexts);
 	free(coords);
 }
@@ -394,7 +382,7 @@ static bool visit_tile(tile_node* node){
 	if(node->texture.id){
 		unsigned child_coverage = 0;
 		
-		if(scale > TEXTURE_SIZE){
+		if(node->complete && scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
 			if(!node->children){
 				node->children = calloc(4, sizeof(*node->children));
@@ -422,14 +410,7 @@ static bool visit_tile(tile_node* node){
 		// Mediocre hueristic to encourage low resolution tiles to load first.
 		int queue_idx = fmax(QUEUE_LO_PRIORITY, fmin(log2(scale/256) + 1, QUEUE_HI_PRIORITY));
 			
-		// Set up a task to render the tile's image.
-		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
-		(*generate_ctx) = (generate_tile_ctx){
-			.queue_idx = queue_idx,
-			.node = node,
-		};
-		
-		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, generate_ctx, 0, queue_idx, &JOB_THROTTLE[queue_idx])){
+		if(tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, node, 0, queue_idx, &JOB_THROTTLE[queue_idx])){
 			// The node was successfully queued, so mark it as requested.
 			node->requested = true;
 		}
