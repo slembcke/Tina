@@ -51,7 +51,7 @@ typedef struct {
 	// User defined job context pointer. (optional)
 	void* user_data;
 	// User defined job index. (optional)
-	unsigned user_idx;
+	uintptr_t user_idx;
 	// Index of the queue to run the job on.
 	unsigned queue_idx;
 } tina_job_description;
@@ -109,7 +109,7 @@ void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
 // Returns 0 if the group is already full (i.e. group->max_count) and the job was not added.
-static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, unsigned user_idx, unsigned queue_idx, tina_group* group){
+static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
 	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
 	return tina_scheduler_enqueue_batch(sched, &desc, 1, group);
 }

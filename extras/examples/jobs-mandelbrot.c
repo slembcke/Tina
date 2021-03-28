@@ -151,8 +151,7 @@ unsigned TEXTURE_TIMESTAMP[TEXTURE_CACHE_SIZE];
 // Context for the task to render sample batches.
 typedef struct {
 	bool* valid;
-	// Coordinates to be sampled.
-	double complex* restrict coords;
+	tile_coord coord;
 	// Output pixels
 	uint8_t* pixels;
 } render_scanline_ctx;
@@ -162,20 +161,33 @@ typedef struct {
 
 // Task function that renders mandelbrot samples.
 static void render_samples_job(tina_job* job){
-	const unsigned maxi = 32*1024;
-	const double bailout = 256;
-	
 	const render_scanline_ctx* const ctx = tina_job_get_description(job)->user_data;
 	
 	// Check if the request is valid since waiting in the queue.
 	if(!ctx->valid) return;
+
+	tile_coord c = ctx->coord;
+	double scale = coord_to_scale(c)/TEXTURE_SIZE;
+	c.x *= TEXTURE_SIZE;
+	c.y *= TEXTURE_SIZE;
+	
+	int batch_index = tina_job_get_description(job)->user_idx;
+	double y = (c.y + 2*batch_index - TEXTURE_SIZE + 1)*scale;
+	
+	double complex coords[SAMPLE_BATCH_COUNT];
+	for(int i = 0; i < TEXTURE_SIZE; i++){
+		coords[i] = (c.x + 2*i - TEXTURE_SIZE + 1)*scale + y*I;
+	}
+	
+	const unsigned maxi = 32*1024;
+	const double bailout = 256;
 	
 	float r_samples[SAMPLE_BATCH_COUNT];
 	float g_samples[SAMPLE_BATCH_COUNT];
 	float b_samples[SAMPLE_BATCH_COUNT];
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		double complex c = ctx->coords[idx];
+		double complex c = coords[idx];
 		double complex z = c;
 		double complex dz = 1;
 		
@@ -208,8 +220,10 @@ static void render_samples_job(tina_job* job){
 		}
 	}
 	
+	nanosleep(&(struct timespec){.tv_nsec = 10000000}, NULL);
+	
 	// Resolve. (TODO need to move this to the GFX queue to get rid of flickering?)
-	uint8_t* pixels = ctx->pixels;
+	uint8_t* pixels = ctx->pixels + 4*tina_job_get_description(job)->user_idx*SAMPLE_BATCH_COUNT;
 	for(unsigned src_idx = 0; src_idx < SAMPLE_BATCH_COUNT; src_idx++){
 		float dither = 0;
 		*pixels++ = 255*fmax(0, fmin(r_samples[src_idx] + dither, 1));
@@ -235,45 +249,44 @@ static void update_tile_texture(tina_job* job, unsigned tex_id, void* pixels){
 	sg_update_image(TEXTURE_CACHE[tex_id], &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
 }
 
+static uint8_t decode_zcurve(uint8_t n){
+	// Copy n into each byte of splat.
+	uint64_t splat = n*0x0101010101010101;
+	// Mask and select bits into the upper byte.
+	uint64_t x = (splat & 0x8040201008040201)*0x1000080004000200;
+	uint64_t y = (splat & 0x8040201008040201)*0x0008000400020001;
+	// Combine
+	return (x >> 60) | (y >> 56);
+}
+
 // Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job){
 	tile_node *node = tina_job_get_description(job)->user_data;
 	unsigned queue = tina_job_get_description(job)->queue_idx;
 	
 	const unsigned sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
-	const unsigned batch_count = sample_count/SAMPLE_BATCH_COUNT;
 
 	// Allocate memory for the sample coords and output values.
 	// You'd probably want to batch allocate these if this was a real thing.
-	render_scanline_ctx* render_contexts = malloc(batch_count*sizeof(render_scanline_ctx));
-	double complex* coords = malloc(sample_count*sizeof(double complex));
+	render_scanline_ctx render_contexts[TEXTURE_SIZE];
 	uint8_t* pixels = calloc(4, TEXTURE_SIZE*TEXTURE_SIZE);
 	
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
 	tina_group group = {};
 	
-	tile_coord c = node->coord;
-	double scale = coord_to_scale(c)/TEXTURE_SIZE;
-	c.x *= TEXTURE_SIZE;
-	c.y *= TEXTURE_SIZE;
-	
 	// OK! Now for the exciting part!
 	// Loop through all the pixels and subsamples (for anti-aliasing).
 	// Break them into batches of SAMPLE_BATCH_COUNT size, and create tasks to render them.
-	unsigned sample_cursor = 0, batch_cursor = 0;
-	for(int64_t y = 1 - TEXTURE_SIZE; y < TEXTURE_SIZE; y += 2){
-		for(int64_t x = 1 - TEXTURE_SIZE; x < TEXTURE_SIZE; x += 2){
-			coords[sample_cursor++] = (c.x + x)*scale + (c.y + y)*scale*I;
-		}
-		
+	unsigned batch_cursor = 0;
+	while(batch_cursor < 256){
 		render_scanline_ctx* rctx = &render_contexts[batch_cursor];
 		(*rctx) = (render_scanline_ctx){
 			.valid = &node->requested,
-			.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
-			.pixels = pixels + 4*batch_cursor*SAMPLE_BATCH_COUNT,
+			.coord = node->coord,
+			.pixels = pixels,
 		};
 		
-		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, queue, &group);
+		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, batch_cursor, queue, &group);
 		batch_cursor++;
 	}
 	
@@ -313,14 +326,11 @@ static void generate_tile_job(tina_job* job){
 	update_tile_texture(job, tex_id, pixels);
 	node->requested = false;
 	node->complete = true;
-	free(pixels);
 	
 	cleanup:
 	// If we aborted because this was a stale tile, wait for all batches to finish before freeing their memory!
 	tina_job_wait(job, &group, 0);
-	
-	free(render_contexts);
-	free(coords);
+	free(pixels);
 }
 
 #define VIEW_RESET (Transform){0.75, 0, 0, 0.75, 0.5, 0}
@@ -409,7 +419,7 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 			child_coverage += visit_tile(node->children + 3, request_queue);
 		}
 		
-		if(child_coverage < 4) draw_tile(node);
+		if(child_coverage < 1) draw_tile(node);
 		
 		return node->complete;
 	} else if(!node->requested){
