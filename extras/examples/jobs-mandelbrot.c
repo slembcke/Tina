@@ -22,6 +22,8 @@
 
 // NOTE: This is an interative Mandelbrot fractal explorer built on top of Sokol.
 
+#include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <tgmath.h>
@@ -106,9 +108,23 @@ static inline GLMatrix TransformToGL(Transform m){
 // Current frame timestamp used to kill off tile requests that go offscreen before they finish.
 uint64_t TIMESTAMP;
 
+typedef struct {
+	int64_t x, y, z;
+} tile_coord;
+
+static inline double coord_to_scale(tile_coord c){
+	return exp2(4 - c.z);
+}
+
+static inline Transform coord_to_matrix(tile_coord c){
+	double s = coord_to_scale(c);
+	return (Transform){s, 0, 0, s, s*c.x, s*c.y};
+}
+
 // Image tiles are arranged into a quadtree.
 typedef struct tile_node tile_node;
 struct tile_node {
+	tile_coord coord;
 	// Last frame this tile was visible.
 	uint64_t timestamp;
 	// Has the tile already been requested.
@@ -138,8 +154,6 @@ sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
 typedef struct {
 	// Which queue (priority) this request belongs to.
 	unsigned queue_idx;
-	// Model matrix for the tile used to calculate sample coordinates.
-	Transform matrix;
 	// The node the request will be assigned to.
 	tile_node* node;
 } generate_tile_ctx;
@@ -207,8 +221,7 @@ static void render_samples_job(tina_job* job){
 static void generate_tile_job(tina_job* job){
 	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
 	
-	const unsigned multisample_count = 4;
-	const size_t sample_count = multisample_count*TEXTURE_SIZE*TEXTURE_SIZE;
+	const size_t sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
 
 	// Allocate memory for the sample coords and output values.
@@ -222,47 +235,42 @@ static void generate_tile_job(tina_job* job){
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
 	tina_group tile_throttle = {};
 	
+	tile_coord c = ctx->node->coord;
+	double scale = coord_to_scale(c)/TEXTURE_SIZE;
+	c.x *= TEXTURE_SIZE;
+	c.y *= TEXTURE_SIZE;
+	
 	// OK! Now for the exciting part!
 	// Loop through all the pixels and subsamples (for anti-aliasing).
 	// Break them into batches of SAMPLE_BATCH_COUNT size, and create tasks to render them.
 	size_t sample_cursor = 0, batch_cursor = 0;
-	for(unsigned y = 0; y < TEXTURE_SIZE; y++){
-		for(unsigned x = 0; x < TEXTURE_SIZE; x++){
-			for(unsigned sample = 0; sample < multisample_count; sample++){
-				// Jitter pixel locations using the R2 sequence.
-				uint32_t ssx = ((uint32_t)x << 16) + (uint16_t)(49472*sample);
-				uint32_t ssy = ((uint32_t)y << 16) + (uint16_t)(37345*sample);
-				// Transform to the final sample locations using the matrix.
-				Vec2 p = TransformPoint(ctx->matrix, (Vec2){
-					2*((double)ssx/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-					2*((double)ssy/(double)((uint32_t)TEXTURE_SIZE << 16)) - 1,
-				});
-				coords[sample_cursor] = p.x + p.y*I;
-				
-				// Check if the batch is full, and generate a render task for it.
-				if((++sample_cursor & (SAMPLE_BATCH_COUNT - 1)) == 0){
-					// Check if this tile is already stale and bailout.
-					if(ctx->node->timestamp + 16 < TIMESTAMP){
-						ctx->node->requested = false;
-						goto cleanup;
-					}
-					
-					render_scanline_ctx* rctx = &render_contexts[batch_cursor];
-					(*rctx) = (render_scanline_ctx){
-						.valid = &ctx->node->requested,
-						.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
-						.r_samples = r_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-						.g_samples = g_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-						.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-					};
-					
-					// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
-					// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
-					tina_job_wait(job, &tile_throttle, common_worker_count());
-					tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
-					
-					batch_cursor++;
+	for(int64_t y = 1 - TEXTURE_SIZE; y < TEXTURE_SIZE; y += 2){
+		for(int64_t x = 1 - TEXTURE_SIZE; x < TEXTURE_SIZE; x += 2){
+			coords[sample_cursor] = (c.x + x)*scale + (c.y + y)*(scale*I);
+			
+			// Check if the batch is full, and generate a render task for it.
+			if((++sample_cursor & (SAMPLE_BATCH_COUNT - 1)) == 0){
+				// Check if this tile is already stale and bailout.
+				if(ctx->node->timestamp + 16 < TIMESTAMP){
+					ctx->node->requested = false;
+					goto cleanup;
 				}
+				
+				render_scanline_ctx* rctx = &render_contexts[batch_cursor];
+				(*rctx) = (render_scanline_ctx){
+					.valid = &ctx->node->requested,
+					.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
+					.r_samples = r_samples + batch_cursor*SAMPLE_BATCH_COUNT,
+					.g_samples = g_samples + batch_cursor*SAMPLE_BATCH_COUNT,
+					.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
+				};
+				
+				// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
+				// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
+				tina_job_wait(job, &tile_throttle, common_worker_count());
+				tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
+				
+				batch_cursor++;
 			}
 		}
 	}
@@ -272,20 +280,12 @@ static void generate_tile_job(tina_job* job){
 	
 	// Resolve samples.
 	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
-	float r = 0, g = 0, b = 0;
-	for(size_t src_idx = 0, dst_idx = 0; src_idx < sample_count;){
-		r += r_samples[src_idx];
-		g += g_samples[src_idx];
-		b += b_samples[src_idx];
-		
-		if((++src_idx & (multisample_count - 1)) == 0){
-			float dither = ((dst_idx/4*193 + dst_idx/1024*146) & 0xFF)/65536.0;
-			pixels[dst_idx++] = 255*fmax(0, fmin(r/multisample_count + dither, 1));
-			pixels[dst_idx++] = 255*fmax(0, fmin(g/multisample_count + dither, 1));
-			pixels[dst_idx++] = 255*fmax(0, fmin(b/multisample_count + dither, 1));
-			pixels[dst_idx++] = 0;
-			r = g = b = 0;
-		}
+	for(size_t src_idx = 0, dst_idx = 0; src_idx < sample_count; src_idx++){
+		float dither = ((dst_idx/4*193 + dst_idx/1024*146) & 0xFF)/65536.0;
+		pixels[dst_idx++] = 255*fmax(0, fmin(r_samples[src_idx] + dither, 1));
+		pixels[dst_idx++] = 255*fmax(0, fmin(g_samples[src_idx] + dither, 1));
+		pixels[dst_idx++] = 255*fmax(0, fmin(b_samples[src_idx] + dither, 1));
+		pixels[dst_idx++] = 0;
 	}
 	
 	// Sokol-GFX is a single threaded API, so we need to upload the pixel data on the rendering thread.
@@ -335,10 +335,6 @@ static Transform pixel_to_world_matrix(void){
 
 static Vec2 mouse_pos;
 
-static Transform sub_matrix(Transform m, double x, double y){
-	return (Transform){0.5*m.a, 0.5*m.b, 0.5*m.c, 0.5*m.d, m.x + x*m.a + y*m.c, m.y + x*m.b + y*m.d};
-}
-
 static bool frustum_cull(const Transform mvp){
 	// Clip space center and extents.
 	Vec2 c = {mvp.x, mvp.y};
@@ -362,7 +358,8 @@ static void draw_tile(Transform mv_matrix, sg_image texture){
 }
 
 // Visit the image tile quadtree, recursively rendering and loading new nodes.
-static void visit_tile(tile_node* node, Transform matrix){
+static void visit_tile(tile_node* node){
+	Transform matrix = coord_to_matrix(node->coord);
 	// Check if this tile is visible on the screen before continuing.
 	Transform mv_matrix = TransformMult(view_matrix, matrix);
 	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return;
@@ -380,13 +377,21 @@ static void visit_tile(tile_node* node, Transform matrix){
 		// If this tile has a pixel density of < 1, draw it's children over the top.
 		if(scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
-			if(!node->children) node->children = calloc(4, sizeof(*node->children));
+			if(!node->children){
+				node->children = calloc(4, sizeof(*node->children));
+				
+				tile_coord c = node->coord;
+				node->children[0].coord = (tile_coord){2*c.x - 1, 2*c.y - 1, c.z + 1};
+				node->children[1].coord = (tile_coord){2*c.x + 1, 2*c.y - 1, c.z + 1};
+				node->children[2].coord = (tile_coord){2*c.x - 1, 2*c.y + 1, c.z + 1};
+				node->children[3].coord = (tile_coord){2*c.x + 1, 2*c.y + 1, c.z + 1};
+			}
 			
 			// Visit all of the children.
-			visit_tile(node->children + 0, sub_matrix(matrix, -0.5, -0.5));
-			visit_tile(node->children + 1, sub_matrix(matrix,  0.5, -0.5));
-			visit_tile(node->children + 2, sub_matrix(matrix, -0.5,  0.5));
-			visit_tile(node->children + 3, sub_matrix(matrix,  0.5,  0.5));
+			visit_tile(node->children + 0);
+			visit_tile(node->children + 1);
+			visit_tile(node->children + 2);
+			visit_tile(node->children + 3);
 		}
 	} else if(!node->requested){
 		// This node is visible on screen, but it's texture has never been requested.
@@ -398,7 +403,6 @@ static void visit_tile(tile_node* node, Transform matrix){
 		generate_tile_ctx* generate_ctx = malloc(sizeof(*generate_ctx));
 		(*generate_ctx) = (generate_tile_ctx){
 			.queue_idx = queue_idx,
-			.matrix = matrix,
 			.node = node,
 		};
 		
@@ -436,8 +440,7 @@ static void app_display(void){
 		0.5, 0.5, 0, 1,
 	});
 	
-	visit_tile(&TREE_ROOT, (Transform){16, 0, 0, 16, 0, 0});
-	
+	visit_tile(&TREE_ROOT);
 	sgl_draw();
 	sg_end_pass();
 	sg_commit();
