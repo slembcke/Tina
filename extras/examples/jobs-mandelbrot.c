@@ -142,6 +142,8 @@ static tile_node TREE_ROOT;
 #define TEXTURE_SIZE 256
 #define TEXTURE_CACHE_SIZE 1024
 
+static uint8_t TEXTURE_INIT_PIXELS[4*TEXTURE_SIZE*TEXTURE_SIZE];
+
 // Implements a simple FIFO texture cache.
 
 // Current cache index to replace next. (If it's not currently visible)
@@ -229,9 +231,34 @@ static void render_samples_job(tina_job* job){
 	}
 }
 
+static unsigned aquire_texture(tina_job* job, tile_node* node){
+	unsigned queue = tina_job_switch_queue(job, QUEUE_GFX);
+	
+	// Linear search for the oldest texture in the cache that is no longer used.
+	unsigned texture_cursor = TEXTURE_CURSOR;
+	while(TEXTURE_NODE[texture_cursor] && TEXTURE_NODE[texture_cursor]->timestamp == TIMESTAMP){
+		texture_cursor = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	}
+	TEXTURE_CURSOR = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+	
+	// Unlink it from the previous node.
+	if(TEXTURE_NODE[texture_cursor]) TEXTURE_NODE[texture_cursor]->texture.id = 0;
+	
+	// Clear the texture.
+	sg_update_image(TEXTURE_CACHE[texture_cursor], &(sg_image_content){.subimage[0][0] = {.ptr = TEXTURE_INIT_PIXELS}});
+	
+	// Link it to our node.
+	TEXTURE_NODE[texture_cursor] = node;
+	node->texture = TEXTURE_CACHE[texture_cursor];
+	
+	tina_job_switch_queue(job, queue);
+	return texture_cursor;
+}
+
 // Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job){
 	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
+	unsigned texture_idx = aquire_texture(job, ctx->node);
 	
 	const size_t sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
 	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
@@ -280,6 +307,7 @@ static void generate_tile_job(tina_job* job){
 		batch_cursor++;
 	}
 	
+	
 	// Wait until all rendering tasks have finished.
 	tina_job_wait(job, &tile_throttle, 0);
 	
@@ -289,20 +317,8 @@ static void generate_tile_job(tina_job* job){
 	// which is explicitly flushed on the main thread during rendering.
 	tina_job_switch_queue(job, QUEUE_GFX);
 	
-	// Linear search for the oldest texture in the cache that is no longer used.
-	size_t texture_cursor = TEXTURE_CURSOR;
-	while(TEXTURE_NODE[texture_cursor] && TEXTURE_NODE[texture_cursor]->timestamp == TIMESTAMP){
-		texture_cursor = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
-	}
-	TEXTURE_CURSOR = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
-	
-	// Reclaim it from the previous owner.
-	if(TEXTURE_NODE[texture_cursor]) TEXTURE_NODE[texture_cursor]->texture.id = 0;
-	
 	// Upload and set up the new texture.
-	TEXTURE_NODE[texture_cursor] = ctx->node;
-	ctx->node->texture = TEXTURE_CACHE[texture_cursor];
-	sg_update_image(ctx->node->texture, &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
+	sg_update_image(TEXTURE_CACHE[texture_idx], &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
 	ctx->node->requested = false;
 	free(pixels);
 	
@@ -414,9 +430,6 @@ static void app_display(void){
 	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 1, 1}}};
 	sg_begin_default_pass(&action, w, h);
 	
-	sgl_defaults();
-	sgl_enable_texture();
-	
 	float pw = fmax(1, (float)w/(float)h);
 	float ph = fmax(1, (float)h/(float)w);
 	proj_matrix = TransformOrtho(-pw, pw, -ph, ph);
@@ -512,6 +525,16 @@ static void app_init(void){
 	puts("Init Sokol-GL.");
 	sgl_desc_t gl_desc = {};
 	sgl_setup(&gl_desc);
+	
+	sgl_defaults();
+	sgl_enable_texture();
+	
+	sgl_load_pipeline(sgl_make_pipeline(&(sg_pipeline_desc){
+		.blend = {.enabled = true, .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA},
+	}));
+	
+	// TEMP Semi-transparent in progress pixels.
+	for(unsigned i = 3; i < sizeof(TEXTURE_INIT_PIXELS); i += 4) TEXTURE_INIT_PIXELS[i] = 0.1*255;
 	
 	puts("Init complete.");
 }
