@@ -163,10 +163,8 @@ typedef struct {
 	bool* valid;
 	// Coordinates to be sampled.
 	double complex* restrict coords;
-	// RGB output values.
-	float* restrict r_samples;
-	float* restrict g_samples;
-	float* restrict b_samples;
+	// Output pixels
+	uint8_t* pixels;
 } render_scanline_ctx;
 
 // How many samples to run in a batch.
@@ -181,6 +179,10 @@ static void render_samples_job(tina_job* job){
 	
 	// Check if the request is valid since waiting in the queue.
 	if(!ctx->valid) return;
+	
+	float r_samples[SAMPLE_BATCH_COUNT];
+	float g_samples[SAMPLE_BATCH_COUNT];
+	float b_samples[SAMPLE_BATCH_COUNT];
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
 		double complex c = ctx->coords[idx];
@@ -202,18 +204,28 @@ static void render_samples_job(tina_job* job){
 		
 		// Color the pixel based on if it diverged and how.
 		if(i == maxi){
-			ctx->r_samples[idx] = 0;
-			ctx->g_samples[idx] = 0;
-			ctx->b_samples[idx] = 0;
+			r_samples[idx] = 0;
+			g_samples[idx] = 0;
+			b_samples[idx] = 0;
 		} else {
 			double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
 			double n = (i - 1) + rem;
 			
 			double phase = 5*log2(n);
-			ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
-			ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
-			ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
+			r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
+			g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
+			b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
 		}
+	}
+	
+	// Resolve
+	uint8_t* pixels = ctx->pixels;
+	for(unsigned src_idx = 0; src_idx < SAMPLE_BATCH_COUNT; src_idx++){
+		float dither = 0;
+		*pixels++ = 255*fmax(0, fmin(r_samples[src_idx] + dither, 1));
+		*pixels++ = 255*fmax(0, fmin(g_samples[src_idx] + dither, 1));
+		*pixels++ = 255*fmax(0, fmin(b_samples[src_idx] + dither, 1));
+		*pixels++ = 255;
 	}
 }
 
@@ -228,9 +240,7 @@ static void generate_tile_job(tina_job* job){
 	// You'd probably want to batch allocate these if this was a real thing.
 	render_scanline_ctx* render_contexts = malloc(batch_count*sizeof(render_scanline_ctx));
 	double complex* coords = malloc(sample_count*sizeof(double complex));
-	float* r_samples = malloc(sample_count*sizeof(float));
-	float* g_samples = malloc(sample_count*sizeof(float));
-	float* b_samples = malloc(sample_count*sizeof(float));
+	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
 	
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
 	tina_group tile_throttle = {};
@@ -246,47 +256,32 @@ static void generate_tile_job(tina_job* job){
 	size_t sample_cursor = 0, batch_cursor = 0;
 	for(int64_t y = 1 - TEXTURE_SIZE; y < TEXTURE_SIZE; y += 2){
 		for(int64_t x = 1 - TEXTURE_SIZE; x < TEXTURE_SIZE; x += 2){
-			coords[sample_cursor] = (c.x + x)*scale + (c.y + y)*(scale*I);
-			
-			// Check if the batch is full, and generate a render task for it.
-			if((++sample_cursor & (SAMPLE_BATCH_COUNT - 1)) == 0){
-				// Check if this tile is already stale and bailout.
-				if(ctx->node->timestamp + 16 < TIMESTAMP){
-					ctx->node->requested = false;
-					goto cleanup;
-				}
-				
-				render_scanline_ctx* rctx = &render_contexts[batch_cursor];
-				(*rctx) = (render_scanline_ctx){
-					.valid = &ctx->node->requested,
-					.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
-					.r_samples = r_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-					.g_samples = g_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-					.b_samples = b_samples + batch_cursor*SAMPLE_BATCH_COUNT,
-				};
-				
-				// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
-				// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
-				tina_job_wait(job, &tile_throttle, common_worker_count());
-				tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
-				
-				batch_cursor++;
-			}
+			coords[sample_cursor++] = (c.x + x)*scale + (c.y + y)*scale*I;
 		}
+		
+		// Check if this tile is already stale and bailout.
+		if(ctx->node->timestamp + 16 < TIMESTAMP){
+			ctx->node->requested = false;
+			goto cleanup;
+		}
+		
+		render_scanline_ctx* rctx = &render_contexts[batch_cursor];
+		(*rctx) = (render_scanline_ctx){
+			.valid = &ctx->node->requested,
+			.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
+			.pixels = pixels + 4*batch_cursor*SAMPLE_BATCH_COUNT,
+		};
+		
+		// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
+		// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
+		tina_job_wait(job, &tile_throttle, common_worker_count());
+		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
+		
+		batch_cursor++;
 	}
 	
 	// Wait until all rendering tasks have finished.
 	tina_job_wait(job, &tile_throttle, 0);
-	
-	// Resolve samples.
-	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
-	for(size_t src_idx = 0, dst_idx = 0; src_idx < sample_count; src_idx++){
-		float dither = ((dst_idx/4*193 + dst_idx/1024*146) & 0xFF)/65536.0;
-		pixels[dst_idx++] = 255*fmax(0, fmin(r_samples[src_idx] + dither, 1));
-		pixels[dst_idx++] = 255*fmax(0, fmin(g_samples[src_idx] + dither, 1));
-		pixels[dst_idx++] = 255*fmax(0, fmin(b_samples[src_idx] + dither, 1));
-		pixels[dst_idx++] = 0;
-	}
 	
 	// Sokol-GFX is a single threaded API, so we need to upload the pixel data on the rendering thread.
 	// By switching queues, we are yielding control to the scheduler.
@@ -318,9 +313,6 @@ static void generate_tile_job(tina_job* job){
 	free(ctx);
 	free(render_contexts);
 	free(coords);
-	free(r_samples);
-	free(g_samples);
-	free(b_samples);
 }
 
 #define VIEW_RESET (Transform){0.75, 0, 0, 0.75, 0.5, 0}
