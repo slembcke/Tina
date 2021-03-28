@@ -361,16 +361,21 @@ static bool frustum_cull(const Transform mvp){
 	return ((fabs(c.x) - ex < 1) && (fabs(c.y) - ey < 1));
 }
 
-static void draw_tile(Transform mv_matrix, sg_image texture){
-	sgl_matrix_mode_modelview();
-	sgl_load_matrix(TransformToGL(mv_matrix).m);
+static void draw_tile(tile_node* node){
+	tile_coord c = node->coord;
+	double s = coord_to_scale(c);
+	Transform m = TransformMult(view_matrix, (Transform){s, 0, 0, s, 0, 0});
+	Vec2 v00 = TransformPoint(m, (Vec2){c.x - 1, c.y - 1});
+	Vec2 v10 = TransformPoint(m, (Vec2){c.x + 1, c.y - 1});
+	Vec2 v01 = TransformPoint(m, (Vec2){c.x - 1, c.y + 1});
+	Vec2 v11 = TransformPoint(m, (Vec2){c.x + 1, c.y + 1});
 	
-	sgl_texture(texture);
+	sgl_texture(node->texture);
 	sgl_begin_triangle_strip();
-		sgl_v2f_t2f(-1, -1, -1, -1);
-		sgl_v2f_t2f( 1, -1,  1, -1);
-		sgl_v2f_t2f(-1,  1, -1,  1);
-		sgl_v2f_t2f( 1,  1,  1,  1);
+		sgl_v2f_t2f(v00.x, v00.y, -1, -1);
+		sgl_v2f_t2f(v10.x, v10.y,  1, -1);
+		sgl_v2f_t2f(v01.x, v01.y, -1,  1);
+		sgl_v2f_t2f(v11.x, v11.y,  1,  1);
 	sgl_end();
 }
 
@@ -386,7 +391,8 @@ static bool visit_tile(tile_node* node){
 	float scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
-		// If this tile has a pixel density of < 1, draw it's children over the top.
+		unsigned child_coverage = 0;
+		
 		if(scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
 			if(!node->children){
@@ -400,16 +406,13 @@ static bool visit_tile(tile_node* node){
 			}
 			
 			// Visit all of the children.
-			unsigned child_count = 0;
-			child_count += visit_tile(node->children + 0);
-			child_count += visit_tile(node->children + 1);
-			child_count += visit_tile(node->children + 2);
-			child_count += visit_tile(node->children + 3);
-			
-			if(child_count < 4) draw_tile(mv_matrix, node->texture);
-		} else {
-			draw_tile(mv_matrix, node->texture);
+			child_coverage += visit_tile(node->children + 0);
+			child_coverage += visit_tile(node->children + 1);
+			child_coverage += visit_tile(node->children + 2);
+			child_coverage += visit_tile(node->children + 3);
 		}
+		
+		if(child_coverage < 4) draw_tile(node);
 		
 		return node->complete;
 	} else if(!node->requested){
