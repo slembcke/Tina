@@ -47,6 +47,7 @@ enum {
 	QUEUE_HI_PRIORITY,
 	// A serial queue used to upload new textures.
 	QUEUE_GFX,
+	QUEUE_GFX_WAIT,
 	_QUEUE_COUNT,
 };
 
@@ -106,7 +107,7 @@ static inline GLMatrix TransformToGL(Transform m){
 }
 
 // Current frame timestamp used to kill off tile requests that go offscreen before they finish.
-uint64_t TIMESTAMP;
+unsigned TIMESTAMP;
 
 typedef struct {
 	int64_t x, y, z;
@@ -129,6 +130,7 @@ struct tile_node {
 	uint64_t timestamp;
 	// Has the tile already been requested.
 	bool requested;
+	bool complete;
 	// Texture for this tile.
 	sg_image texture;
 	tile_node* children;
@@ -142,8 +144,6 @@ static tile_node TREE_ROOT;
 #define TEXTURE_SIZE 256
 #define TEXTURE_CACHE_SIZE 1024
 
-static uint8_t TEXTURE_INIT_PIXELS[4*TEXTURE_SIZE*TEXTURE_SIZE];
-
 // Implements a simple FIFO texture cache.
 
 // Current cache index to replace next. (If it's not currently visible)
@@ -151,6 +151,7 @@ size_t TEXTURE_CURSOR;
 // Node that owns a cache index.
 tile_node* TEXTURE_NODE[TEXTURE_CACHE_SIZE];
 sg_image TEXTURE_CACHE[TEXTURE_CACHE_SIZE];
+unsigned TEXTURE_TIMESTAMP[TEXTURE_CACHE_SIZE];
 
 // Context for the task to render new image tiles.
 typedef struct {
@@ -231,43 +232,34 @@ static void render_samples_job(tina_job* job){
 	}
 }
 
-static unsigned aquire_texture(tina_job* job, tile_node* node){
-	unsigned queue = tina_job_switch_queue(job, QUEUE_GFX);
-	
-	// Linear search for the oldest texture in the cache that is no longer used.
-	unsigned texture_cursor = TEXTURE_CURSOR;
-	while(TEXTURE_NODE[texture_cursor] && TEXTURE_NODE[texture_cursor]->timestamp == TIMESTAMP){
-		texture_cursor = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+static void wait_texture_ready(tina_job* job, unsigned tex_id){
+	// TODO this is kinda dumb... but whatever.
+	if(TEXTURE_TIMESTAMP[tex_id] == TIMESTAMP){
+		tina_job_switch_queue(job, QUEUE_GFX_WAIT);
+		tina_job_switch_queue(job, QUEUE_GFX);
 	}
-	TEXTURE_CURSOR = (texture_cursor + 1) & (TEXTURE_CACHE_SIZE - 1);
+}
+
+static void update_tile_texture(tina_job* job, unsigned tex_id, void* pixels){
+	wait_texture_ready(job, tex_id);
 	
-	// Unlink it from the previous node.
-	if(TEXTURE_NODE[texture_cursor]) TEXTURE_NODE[texture_cursor]->texture.id = 0;
-	
-	// Clear the texture.
-	sg_update_image(TEXTURE_CACHE[texture_cursor], &(sg_image_content){.subimage[0][0] = {.ptr = TEXTURE_INIT_PIXELS}});
-	
-	// Link it to our node.
-	TEXTURE_NODE[texture_cursor] = node;
-	node->texture = TEXTURE_CACHE[texture_cursor];
-	
-	tina_job_switch_queue(job, queue);
-	return texture_cursor;
+	// Upload and set up the new texture.
+	TEXTURE_TIMESTAMP[tex_id] = TIMESTAMP;
+	sg_update_image(TEXTURE_CACHE[tex_id], &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
 }
 
 // Task function that renders mandelbrot image tiles.
 static void generate_tile_job(tina_job* job){
 	generate_tile_ctx *ctx = tina_job_get_description(job)->user_data;
-	unsigned texture_idx = aquire_texture(job, ctx->node);
 	
-	const size_t sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
-	const size_t batch_count = sample_count/SAMPLE_BATCH_COUNT;
+	const unsigned sample_count = TEXTURE_SIZE*TEXTURE_SIZE;
+	const unsigned batch_count = sample_count/SAMPLE_BATCH_COUNT;
 
 	// Allocate memory for the sample coords and output values.
 	// You'd probably want to batch allocate these if this was a real thing.
 	render_scanline_ctx* render_contexts = malloc(batch_count*sizeof(render_scanline_ctx));
 	double complex* coords = malloc(sample_count*sizeof(double complex));
-	uint8_t* pixels = malloc(4*TEXTURE_SIZE*TEXTURE_SIZE);
+	uint8_t* pixels = calloc(4, TEXTURE_SIZE*TEXTURE_SIZE);
 	
 	// Create a group to act as a throttle for how many in flight subtasks are created. 
 	tina_group tile_throttle = {};
@@ -280,7 +272,7 @@ static void generate_tile_job(tina_job* job){
 	// OK! Now for the exciting part!
 	// Loop through all the pixels and subsamples (for anti-aliasing).
 	// Break them into batches of SAMPLE_BATCH_COUNT size, and create tasks to render them.
-	size_t sample_cursor = 0, batch_cursor = 0;
+	unsigned sample_cursor = 0, batch_cursor = 0;
 	for(int64_t y = 1 - TEXTURE_SIZE; y < TEXTURE_SIZE; y += 2){
 		for(int64_t x = 1 - TEXTURE_SIZE; x < TEXTURE_SIZE; x += 2){
 			coords[sample_cursor++] = (c.x + x)*scale + (c.y + y)*scale*I;
@@ -299,27 +291,44 @@ static void generate_tile_job(tina_job* job){
 			.pixels = pixels + 4*batch_cursor*SAMPLE_BATCH_COUNT,
 		};
 		
-		// Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
-		// This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
-		tina_job_wait(job, &tile_throttle, common_worker_count());
+		// // Throttle the number of tasks added to keep the CPUs busy, but the task pool small.
+		// // This allows us to keep the worker threads busy without queueing thousands of tasks all at once.
+		// tina_job_wait(job, &tile_throttle, common_worker_count());
 		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, rctx, 0, ctx->queue_idx, &tile_throttle);
 		
 		batch_cursor++;
 	}
 	
-	
-	// Wait until all rendering tasks have finished.
-	tina_job_wait(job, &tile_throttle, 0);
-	
-	// Sokol-GFX is a single threaded API, so we need to upload the pixel data on the rendering thread.
-	// By switching queues, we are yielding control to the scheduler.
-	// When tina_job_switch_queue() returns this task will be running on the GFX queue,
-	// which is explicitly flushed on the main thread during rendering.
 	tina_job_switch_queue(job, QUEUE_GFX);
 	
-	// Upload and set up the new texture.
-	sg_update_image(TEXTURE_CACHE[texture_idx], &(sg_image_content){.subimage[0][0] = {.ptr = pixels}});
+	// Linear search for the oldest texture in the cache that is no longer used.
+	unsigned tex_id = TEXTURE_CURSOR;
+	while(TEXTURE_NODE[tex_id] && TEXTURE_NODE[tex_id]->timestamp == TIMESTAMP){
+		tex_id = (tex_id + 1) & (TEXTURE_CACHE_SIZE - 1);
+	}
+	TEXTURE_CURSOR = (tex_id + 1) & (TEXTURE_CACHE_SIZE - 1);
+	
+	// Unlink it from the previous node.
+	if(TEXTURE_NODE[tex_id]){
+		TEXTURE_NODE[tex_id]->texture.id = 0;
+		TEXTURE_NODE[tex_id]->complete = false;
+	}
+	
+	// Clear the texture.
+	update_tile_texture(job, tex_id, pixels);
+	
+	// Link it to our node.
+	TEXTURE_NODE[tex_id] = ctx->node;
+	ctx->node->texture = TEXTURE_CACHE[tex_id];
+	
+	while(batch_cursor){
+		batch_cursor = tina_job_wait(job, &tile_throttle, batch_cursor - 1);
+		update_tile_texture(job, tex_id, pixels);
+	}
+	
+	update_tile_texture(job, tex_id, pixels);
 	ctx->node->requested = false;
+	ctx->node->complete = true;
 	free(pixels);
 	
 	cleanup:
@@ -366,22 +375,17 @@ static void draw_tile(Transform mv_matrix, sg_image texture){
 }
 
 // Visit the image tile quadtree, recursively rendering and loading new nodes.
-static void visit_tile(tile_node* node){
+static bool visit_tile(tile_node* node){
 	Transform matrix = coord_to_matrix(node->coord);
 	// Check if this tile is visible on the screen before continuing.
 	Transform mv_matrix = TransformMult(view_matrix, matrix);
-	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return;
+	if(!frustum_cull(TransformMult(proj_matrix, mv_matrix))) return true;
 	
 	node->timestamp = TIMESTAMP;
 	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
 	float scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
 	if(node->texture.id){
-		// This node has a texture. Draw it.
-		// If there are higher resolution tiles, just let them draw over the top.
-		// Don't really care about overdraw in a job system example.
-		draw_tile(mv_matrix, node->texture);
-		
 		// If this tile has a pixel density of < 1, draw it's children over the top.
 		if(scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
@@ -396,11 +400,18 @@ static void visit_tile(tile_node* node){
 			}
 			
 			// Visit all of the children.
-			visit_tile(node->children + 0);
-			visit_tile(node->children + 1);
-			visit_tile(node->children + 2);
-			visit_tile(node->children + 3);
+			unsigned child_count = 0;
+			child_count += visit_tile(node->children + 0);
+			child_count += visit_tile(node->children + 1);
+			child_count += visit_tile(node->children + 2);
+			child_count += visit_tile(node->children + 3);
+			
+			if(child_count < 4) draw_tile(mv_matrix, node->texture);
+		} else {
+			draw_tile(mv_matrix, node->texture);
 		}
+		
+		return node->complete;
 	} else if(!node->requested){
 		// This node is visible on screen, but it's texture has never been requested.
 		
@@ -419,15 +430,18 @@ static void visit_tile(tile_node* node){
 			node->requested = true;
 		}
 	}
+	
+	return false;
 }
 
 static void app_display(void){
 	// Run jobs to load textures.
+	tina_scheduler_run(SCHED, QUEUE_GFX_WAIT, true);
 	tina_scheduler_run(SCHED, QUEUE_GFX, true);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
-	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {1, 1, 1}}};
+	sg_pass_action action = {.colors[0] = {.action = SG_ACTION_CLEAR, .val = {0, 0, 0, 0}}};
 	sg_begin_default_pass(&action, w, h);
 	
 	float pw = fmax(1, (float)w/(float)h);
@@ -493,7 +507,7 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating SCHED.");
-	SCHED = tina_scheduler_new(1024, _QUEUE_COUNT, 128, 64*1024);
+	SCHED = tina_scheduler_new(16*1024, _QUEUE_COUNT, 128, 64*1024);
 	tina_scheduler_queue_priority(SCHED, QUEUE_HI_PRIORITY, QUEUE_MHI_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MHI_PRIORITY, QUEUE_MLO_PRIORITY);
 	tina_scheduler_queue_priority(SCHED, QUEUE_MLO_PRIORITY, QUEUE_LO_PRIORITY);
@@ -530,11 +544,13 @@ static void app_init(void){
 	sgl_enable_texture();
 	
 	sgl_load_pipeline(sgl_make_pipeline(&(sg_pipeline_desc){
-		.blend = {.enabled = true, .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA},
+		.blend.enabled = true,
+		.blend.src_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_DST_ALPHA,
+		.blend.dst_factor_rgb = SG_BLENDFACTOR_DST_ALPHA,
+		.blend.src_factor_alpha = SG_BLENDFACTOR_ONE,
+		.blend.dst_factor_alpha = SG_BLENDFACTOR_ONE,
+		.blend.color_write_mask = SG_COLORMASK_RGBA,
 	}));
-	
-	// TEMP Semi-transparent in progress pixels.
-	for(unsigned i = 3; i < sizeof(TEXTURE_INIT_PIXELS); i += 4) TEXTURE_INIT_PIXELS[i] = 0.1*255;
 	
 	puts("Init complete.");
 }
