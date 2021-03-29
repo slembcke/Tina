@@ -419,8 +419,7 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 	} else {
 		unsigned child_coverage = 0;
 		
-		bool complete = node->status == TILE_STATUS_COMPLETE;
-		if(complete && scale > TEXTURE_SIZE){
+		if(scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
 			if(!node->children){
 				node->children = calloc(4, sizeof(*node->children));
@@ -441,7 +440,7 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 		
 		if(child_coverage < 4 && node->texture.id) draw_tile(node);
 		
-		return complete;
+		return node->status == TILE_STATUS_COMPLETE;
 	}
 	
 	return false;
@@ -493,6 +492,7 @@ static void app_event(const sapp_event *event){
 		case SAPP_EVENTTYPE_KEY_UP: {
 			if(event->key_code == SAPP_KEYCODE_ESCAPE) sapp_request_quit();
 			if(event->key_code == SAPP_KEYCODE_SPACE) view_matrix = VIEW_RESET;
+			if(event->key_code == SAPP_KEYCODE_R) TREE_ROOT = (tile_node){};
 		} break;
 		
 		case SAPP_EVENTTYPE_MOUSE_MOVE: {
