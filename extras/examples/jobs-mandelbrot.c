@@ -196,7 +196,7 @@ static void render_samples_job(tina_job* job){
 	}
 	
 	const unsigned maxi = 256*1024;
-	const double bailout = 16;
+	const double bailout = 256;
 	
 	float r_samples[SAMPLE_BATCH_COUNT];
 	float g_samples[SAMPLE_BATCH_COUNT];
@@ -210,23 +210,24 @@ static void render_samples_job(tina_job* job){
 		
 		// Iterate until the fractal function diverges.
 		unsigned i = 0;
-		while(sqrt(zr*zr + zi*zi) <= bailout && i < maxi){
-			escape *= 4*(zr*zr + zi*zi);
+		while(true){
+			double zmag_sq = zr*zr + zi*zi;
+			if(zmag_sq > bailout || i > maxi) break;
+			
+			escape *= 4*zmag_sq;
 			if(escape < 0x1p-32){
 				i = maxi;
 				break;
 			}
 			
-			double complex dz = dr + di*I;
-			dz = 2*(zr + zi*I)*dz + 1;
-			
 			double zr1 = zr*zr - zi*zi + cr;
 			double zi1 = 2*zr*zi + ci;
-			zr = zr1, zi = zi1;
 			
-			// double dr1 = 2*(dr*zr1 - di*zi1) + 1.0;
-			// double di1 = 2*(dr*zi1 + di*zr1);
-			dr = creal(dz), di = cimag(dz);
+			double dr1 = 2*(dr*zr - di*zi) + 1.0;
+			double di1 = 2*(dr*zi + di*zr);
+			
+			zr = zr1, zi = zi1;
+			dr = dr1, di = di1;
 			
 			i++;
 		}
@@ -245,11 +246,11 @@ static void render_samples_job(tina_job* job){
 			g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
 			b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
 			
-			double dist = sqrt(zr*zr + zi*zi)*log(sqrt(zr*zr + zi*zi))/sqrt(dr*dr + di*di);
-			double v = dist*exp2(tcoord.z + 0);
-			r_samples[idx] = v;
-			g_samples[idx] = v;
-			b_samples[idx] = v;
+			// double dist = sqrt(zr*zr + zi*zi)*log(sqrt(zr*zr + zi*zi))/sqrt(dr*dr + di*di);
+			// double v = dist*exp2(tcoord.z + 0);
+			// r_samples[idx] = v;
+			// g_samples[idx] = v;
+			// b_samples[idx] = v;
 		}
 	}
 	
