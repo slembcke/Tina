@@ -178,46 +178,56 @@ static void render_samples_job(tina_job* job){
 	// Check if the request is valid since waiting in the queue.
 	if(ctx->node->status != TILE_STATUS_REQUESTED) return;
 
-	tile_coord c = ctx->node->coord;
-	double scale = coord_to_scale(c)/TEXTURE_SIZE;
-	c.x *= TEXTURE_SIZE;
-	c.y *= TEXTURE_SIZE;
+	tile_coord tcoord = ctx->node->coord;
+	double scale = coord_to_scale(tcoord)/TEXTURE_SIZE;
+	tcoord.x *= TEXTURE_SIZE;
+	tcoord.y *= TEXTURE_SIZE;
 	
 	unsigned batch_idx = tina_job_get_description(job)->user_idx;
 	// This is completely unnecessary, but looks mildly neat.
 	batch_idx = decode_zcurve(batch_idx);
 	int x0 = 16*(batch_idx & 0x0F), y0 = 16*(batch_idx / 0x10);
 	
-	double complex coords[SAMPLE_BATCH_COUNT];
+	double cr_arr[SAMPLE_BATCH_COUNT], ci_arr[SAMPLE_BATCH_COUNT];
 	for(int i = 0; i < TEXTURE_SIZE; i++){
 		int x = x0 + (i & 0x0F), y = y0 + (i / 0x10);
-		coords[i] = 
-			(c.x + 2*x - TEXTURE_SIZE + 1)*scale +
-			(c.y + 2*y - TEXTURE_SIZE + 1)*scale*I;
+		cr_arr[i] = (tcoord.x + 2*x - TEXTURE_SIZE + 1)*scale;
+		ci_arr[i] = (tcoord.y + 2*y - TEXTURE_SIZE + 1)*scale;
 	}
 	
 	const unsigned maxi = 256*1024;
-	const double bailout = 256;
+	const double bailout = 16;
 	
 	float r_samples[SAMPLE_BATCH_COUNT];
 	float g_samples[SAMPLE_BATCH_COUNT];
 	float b_samples[SAMPLE_BATCH_COUNT];
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		double complex c = coords[idx];
-		double complex z = c;
-		double complex dz = 1;
+		double cr = cr_arr[idx], ci = ci_arr[idx];
+		double zr = cr, zi = ci;
+		double dr = 1, di = 0;
+		double escape = 1;
 		
 		// Iterate until the fractal function diverges.
 		unsigned i = 0;
-		while(fabs(z) <= bailout && i < maxi){
-			dz *= 2*z;
-			if(fabs(dz) < 0x1p-16){
+		while(sqrt(zr*zr + zi*zi) <= bailout && i < maxi){
+			escape *= 4*(zr*zr + zi*zi);
+			if(escape < 0x1p-32){
 				i = maxi;
 				break;
 			}
 			
-			z = z*z + c;
+			double complex dz = dr + di*I;
+			dz = 2*(zr + zi*I)*dz + 1;
+			
+			double zr1 = zr*zr - zi*zi + cr;
+			double zi1 = 2*zr*zi + ci;
+			zr = zr1, zi = zi1;
+			
+			// double dr1 = 2*(dr*zr1 - di*zi1) + 1.0;
+			// double di1 = 2*(dr*zi1 + di*zr1);
+			dr = creal(dz), di = cimag(dz);
+			
 			i++;
 		}
 		
@@ -227,13 +237,19 @@ static void render_samples_job(tina_job* job){
 			g_samples[idx] = 0;
 			b_samples[idx] = 0;
 		} else {
-			double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
+			double rem = 1 + log2(log2(bailout)) - log2(log2(sqrt(zr*zr + zi*zi)));
 			double n = (i - 1) + rem;
 			
 			double phase = 5*log2(n);
 			r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
 			g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
 			b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
+			
+			double dist = sqrt(zr*zr + zi*zi)*log(sqrt(zr*zr + zi*zi))/sqrt(dr*dr + di*di);
+			double v = dist*exp2(tcoord.z + 0);
+			r_samples[idx] = v;
+			g_samples[idx] = v;
+			b_samples[idx] = v;
 		}
 	}
 	
