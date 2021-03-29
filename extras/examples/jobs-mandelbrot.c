@@ -412,14 +412,15 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 	
 	node->timestamp = TIMESTAMP;
 	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
-	float scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
+	float scale = (sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d))/TEXTURE_SIZE;
 	
 	if(node->status == TILE_STATUS_INITIAL){
+		// Reprioritize nodes with a large scale to accelerate re-rendering deep zooms?
 		request_insert(request_queue, node);
 	} else {
 		unsigned child_coverage = 0;
 		
-		if(scale > TEXTURE_SIZE){
+		if(scale > 1){
 			// Allocate the children if they haven't been visited yet.
 			if(!node->children){
 				node->children = calloc(4, sizeof(*node->children));
