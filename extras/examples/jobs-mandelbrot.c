@@ -312,6 +312,8 @@ static void generate_tile_job(tina_job* job){
 	while(batch_cursor){
 		// Check if this tile is already stale and bailout.
 		if(node->timestamp + 16 < TIMESTAMP){
+			TEXTURE_NODE[tex_id] = NULL;
+			node->texture.id = 0;
 			node->status = TILE_STATUS_INITIAL;
 			goto cleanup;
 		}
@@ -368,7 +370,7 @@ static void draw_tile(tile_node* node){
 	sgl_end();
 }
 
-#define REQUEST_QUEUE_LENGTH 8
+#define REQUEST_QUEUE_LENGTH 4
 
 static void request_insert(tile_node** request_queue, tile_node* node){
 	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
@@ -392,7 +394,9 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 	Transform ddm = TransformMult(TransformInverse(pixel_to_world_matrix()), matrix);
 	float scale = sqrt(ddm.a*ddm.a + ddm.b*ddm.b) + sqrt(ddm.c*ddm.c + ddm.d*ddm.d);
 	
-	if(node->texture.id){
+	if(node->status == TILE_STATUS_INITIAL){
+		request_insert(request_queue, node);
+	} else {
 		unsigned child_coverage = 0;
 		
 		bool complete = node->status == TILE_STATUS_COMPLETE;
@@ -415,11 +419,9 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 			child_coverage += visit_tile(node->children + 3, request_queue);
 		}
 		
-		if(child_coverage < 4) draw_tile(node);
+		if(child_coverage < 4 && node->texture.id) draw_tile(node);
 		
 		return complete;
-	} else if(node->status == TILE_STATUS_INITIAL){
-		request_insert(request_queue, node);
 	}
 	
 	return false;
@@ -486,6 +488,7 @@ static void app_event(const sapp_event *event){
 		
 		case SAPP_EVENTTYPE_MOUSE_DOWN: {
 			if(event->mouse_button == SAPP_MOUSEBUTTON_LEFT) mouse_drag = true;
+			if(event->mouse_button == SAPP_MOUSEBUTTON_RIGHT) zoom -= 10;
 		} break;
 		case SAPP_EVENTTYPE_MOUSE_UP: {
 			if(event->mouse_button == SAPP_MOUSEBUTTON_LEFT) mouse_drag = false;
@@ -503,7 +506,7 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating SCHED.");
-	SCHED = tina_scheduler_new(16*1024, _QUEUE_COUNT, 128, 64*1024);
+	SCHED = tina_scheduler_new(2*1024, _QUEUE_COUNT, 32, 64*1024);
 	
 	common_start_worker_threads(0, SCHED, QUEUE_WORK);
 	
