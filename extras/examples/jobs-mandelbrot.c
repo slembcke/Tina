@@ -117,15 +117,19 @@ static inline Transform coord_to_matrix(tile_coord c){
 	return (Transform){s, 0, 0, s, s*c.x, s*c.y};
 }
 
+typedef enum {
+	TILE_STATUS_INITIAL,
+	TILE_STATUS_REQUESTED,
+	TILE_STATUS_COMPLETE,
+} tile_status;
+
 // Image tiles are arranged into a quadtree.
 typedef struct tile_node tile_node;
 struct tile_node {
 	tile_coord coord;
 	// Last frame this tile was visible.
 	uint64_t timestamp;
-	// Has the tile already been requested.
-	bool requested;
-	bool complete;
+	tile_status status;
 	// Texture for this tile.
 	sg_image texture;
 	tile_node* children;
@@ -172,7 +176,7 @@ static void render_samples_job(tina_job* job){
 	const render_scanline_ctx* const ctx = tina_job_get_description(job)->user_data;
 	
 	// Check if the request is valid since waiting in the queue.
-	if(!ctx->node->requested) return;
+	if(ctx->node->status != TILE_STATUS_REQUESTED) return;
 
 	tile_coord c = ctx->node->coord;
 	double scale = coord_to_scale(c)/TEXTURE_SIZE;
@@ -192,7 +196,7 @@ static void render_samples_job(tina_job* job){
 			(c.y + 2*y - TEXTURE_SIZE + 1)*scale*I;
 	}
 	
-	const unsigned maxi = 32*1024;
+	const unsigned maxi = 256*1024;
 	const double bailout = 256;
 	
 	float r_samples[SAMPLE_BATCH_COUNT];
@@ -294,7 +298,7 @@ static void generate_tile_job(tina_job* job){
 	// Unlink it from the previous node.
 	if(TEXTURE_NODE[tex_id]){
 		TEXTURE_NODE[tex_id]->texture.id = 0;
-		TEXTURE_NODE[tex_id]->complete = false;
+		TEXTURE_NODE[tex_id]->status = TILE_STATUS_INITIAL;
 	}
 	
 	// Clear the texture.
@@ -308,18 +312,15 @@ static void generate_tile_job(tina_job* job){
 	while(batch_cursor){
 		// Check if this tile is already stale and bailout.
 		if(node->timestamp + 16 < TIMESTAMP){
-			node->requested = false;
+			node->status = TILE_STATUS_INITIAL;
 			goto cleanup;
 		}
 		
 		batch_cursor = tina_job_wait(job, &group, batch_cursor - 1);
 		update_tile_texture(job, tex_id, pixels);
 	}
-	// tina_job_wait(job, &group, 0);
 	
-	update_tile_texture(job, tex_id, pixels);
-	node->requested = false;
-	node->complete = true;
+	node->status = TILE_STATUS_COMPLETE;
 	
 	cleanup:
 	// If we aborted because this was a stale tile, wait for all batches to finish before freeing their memory!
@@ -394,7 +395,8 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 	if(node->texture.id){
 		unsigned child_coverage = 0;
 		
-		if(node->complete && scale > TEXTURE_SIZE){
+		bool complete = node->status == TILE_STATUS_COMPLETE;
+		if(complete && scale > TEXTURE_SIZE){
 			// Allocate the children if they haven't been visited yet.
 			if(!node->children){
 				node->children = calloc(4, sizeof(*node->children));
@@ -415,8 +417,8 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 		
 		if(child_coverage < 4) draw_tile(node);
 		
-		return node->complete;
-	} else if(!node->requested){
+		return complete;
+	} else if(node->status == TILE_STATUS_INITIAL){
 		request_insert(request_queue, node);
 	}
 	
@@ -453,7 +455,7 @@ static void app_display(void){
 	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
 		if(request_queue[i] && tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, request_queue[i], 0, QUEUE_WORK, &tile_throttle_group)){
 			// The node was successfully queued, so mark it as requested.
-			request_queue[i]->requested = true;
+			request_queue[i]->status = TILE_STATUS_REQUESTED;
 		}
 	}
 	
