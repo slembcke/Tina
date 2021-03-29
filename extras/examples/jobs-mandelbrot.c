@@ -237,6 +237,8 @@ static void render_samples_job(tina_job* job){
 		}
 	}
 	
+	// nanosleep(&(struct timespec){.tv_nsec = 10000000}, NULL);
+	
 	// Resolve. (TODO need to move this to the GFX queue to get rid of flickering?)
 	uint8_t* pixels = ctx->pixels + 4*16*((batch_idx & 0x0F) + TEXTURE_SIZE*(batch_idx / 0x10));
 	for(unsigned src_idx = 0; src_idx < SAMPLE_BATCH_COUNT; src_idx++){
@@ -315,6 +317,7 @@ static void generate_tile_job(tina_job* job){
 			TEXTURE_NODE[tex_id] = NULL;
 			node->texture.id = 0;
 			node->status = TILE_STATUS_INITIAL;
+			tina_job_wait(job, &group, 0);
 			goto cleanup;
 		}
 		
@@ -322,11 +325,11 @@ static void generate_tile_job(tina_job* job){
 		update_tile_texture(job, tex_id, pixels);
 	}
 	
+	// batch_cursor = tina_job_wait(job, &group, 0);
+	// update_tile_texture(job, tex_id, pixels);
 	node->status = TILE_STATUS_COMPLETE;
 	
 	cleanup:
-	// If we aborted because this was a stale tile, wait for all batches to finish before freeing their memory!
-	tina_job_wait(job, &group, 0);
 	free(pixels);
 }
 
@@ -370,7 +373,7 @@ static void draw_tile(tile_node* node){
 	sgl_end();
 }
 
-#define REQUEST_QUEUE_LENGTH 4
+#define REQUEST_QUEUE_LENGTH 8
 
 static void request_insert(tile_node** request_queue, tile_node* node){
 	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
@@ -506,7 +509,7 @@ static void app_init(void){
 	puts("Sokol-App init.");
 	
 	puts("Creating SCHED.");
-	SCHED = tina_scheduler_new(2*1024, _QUEUE_COUNT, 32, 64*1024);
+	SCHED = tina_scheduler_new(4*1024, _QUEUE_COUNT, 32, 64*1024);
 	
 	common_start_worker_threads(0, SCHED, QUEUE_WORK);
 	
@@ -537,7 +540,7 @@ static void app_init(void){
 	sgl_load_pipeline(sgl_make_pipeline(&(sg_pipeline_desc){
 		.blend.enabled = true,
 		.blend.src_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_DST_ALPHA,
-		.blend.dst_factor_rgb = SG_BLENDFACTOR_DST_ALPHA,
+		.blend.dst_factor_rgb = SG_BLENDFACTOR_ONE,
 		.blend.src_factor_alpha = SG_BLENDFACTOR_ONE,
 		.blend.dst_factor_alpha = SG_BLENDFACTOR_ONE,
 		.blend.color_write_mask = SG_COLORMASK_RGBA,
