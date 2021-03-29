@@ -212,7 +212,7 @@ static void render_samples_job(tina_job* job){
 		unsigned i = 0;
 		while(true){
 			double zmag_sq = zr*zr + zi*zi;
-			if(zmag_sq > bailout || i > maxi) break;
+			if(zmag_sq > bailout || i >= maxi) break;
 			
 			escape *= 4*zmag_sq;
 			if(escape < 0x1p-32){
