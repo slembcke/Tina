@@ -102,10 +102,10 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stderr, _MESSAGE_"\n"); abort();} }
 #endif
 
-// Magic number to help assert for memory corruption errors.
-#define _TINA_MAGIC 0x54494E41ul
-
-const tina TINA_EMPTY = {._magic = _TINA_MAGIC};
+const tina TINA_EMPTY = {
+	// Magic number to help assert for memory corruption errors.
+	._magic = 0x54494E41ul
+};
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
@@ -122,7 +122,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	coro->completed = false;
 	coro->buffer = buffer;
 	coro->size = size;
-	coro->_magic = _TINA_MAGIC;
+	coro->_magic = TINA_EMPTY._magic;
 	
 	// Temporary empty coroutine for the init function to use.
 	tina caller = TINA_EMPTY;
@@ -149,7 +149,7 @@ void _tina_context(tina* coro, tina_func* body){
 }
 
 uintptr_t tina_swap(tina* from, tina* to, uintptr_t value){
-	_TINA_ASSERT(to->_magic == _TINA_MAGIC, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
+	_TINA_ASSERT(to->_magic == TINA_EMPTY._magic, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
 	typedef uintptr_t swap(void** sp_from, void** sp_to, uintptr_t value);
 	return ((swap*)_tina_swap)(&from->_sp, &to->_sp, value);
 }
