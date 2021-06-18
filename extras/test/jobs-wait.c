@@ -88,21 +88,17 @@ static void test_wait_countdown_async(tina_job* job){
 static void run_tests(tina_job* job){
 	test_wait_countdown_sync(job);
 	test_wait_countdown_async(job);
-	
-	bool* done = tina_job_get_description(job)->user_data;
-	*done = true;
+	tina_scheduler_interrupt(SCHED, QUEUE_MAIN);
 }
 
 int main(int argc, const char *argv[]){
 	SCHED = tina_scheduler_new(1024, _QUEUE_COUNT, 65, 64*1024);
 	common_start_worker_threads(1, SCHED, QUEUE_WORK);
 	
-	bool done = false;
-	tina_scheduler_enqueue(SCHED, NULL, run_tests, &done, 0, QUEUE_MAIN, NULL);
+	tina_scheduler_enqueue(SCHED, NULL, run_tests, NULL, 0, QUEUE_MAIN, NULL);
+	tina_scheduler_run(SCHED, QUEUE_MAIN);
 	
-	while(!done) tina_scheduler_run(SCHED, QUEUE_MAIN, true);
-	
-	tina_scheduler_pause(SCHED);
+	tina_scheduler_interrupt(SCHED, QUEUE_WORK);
 	common_destroy_worker_threads();
 	
 	return EXIT_SUCCESS;

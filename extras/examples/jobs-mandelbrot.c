@@ -40,7 +40,7 @@
 #include "tina_jobs.h"
 
 enum {
-	// Used as concurrent priority queues for rendering tiles.
+	// Used as parallel priority queues for rendering tiles.
 	QUEUE_WORK,
 	// A serial queue used to upload new textures.
 	QUEUE_GFX,
@@ -449,8 +449,8 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 
 static void app_display(void){
 	// Run jobs to load textures.
-	tina_scheduler_run(SCHED, QUEUE_GFX_WAIT, true);
-	tina_scheduler_run(SCHED, QUEUE_GFX, true);
+	tina_scheduler_flush(SCHED, QUEUE_GFX_WAIT);
+	tina_scheduler_flush(SCHED, QUEUE_GFX);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();
@@ -573,7 +573,7 @@ static void app_cleanup(void){
 	
 	puts("WORKERS shutdown.");
 	TIMESTAMP += 1000;
-	tina_scheduler_pause(SCHED);
+	tina_scheduler_interrupt(SCHED, QUEUE_WORK);
 	common_destroy_worker_threads();
 	
 	puts ("Destroing SCHED");
