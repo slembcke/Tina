@@ -449,8 +449,8 @@ static bool visit_tile(tile_node* node, tile_node** request_queue){
 
 static void app_display(void){
 	// Run jobs to load textures.
-	tina_scheduler_flush(SCHED, QUEUE_GFX_WAIT);
-	tina_scheduler_flush(SCHED, QUEUE_GFX);
+	tina_scheduler_run(SCHED, QUEUE_GFX_WAIT, TINA_RUN_FLUSH);
+	tina_scheduler_run(SCHED, QUEUE_GFX, TINA_RUN_FLUSH);
 	TIMESTAMP++;
 	
 	int w = sapp_width(), h = sapp_height();

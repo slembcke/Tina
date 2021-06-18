@@ -85,13 +85,14 @@ void tina_scheduler_free(tina_scheduler* sched);
 // Set link a pair of queues for job prioritization. When the main queue is empty it will steal jobs from the fallback.
 void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx);
 
-// Run a single job in the given queue otherwise return false if the queue is empty.
-bool tina_scheduler_pump(tina_scheduler* sched, unsigned queue_idx);
-// Run jobs in a queue until it's empty.
-void tina_scheduler_flush(tina_scheduler* sched, unsigned queue_idx);
-// Execute jobs in a queue continuously on the current thread.
-// Exits only after tina_scheduler_interrupt() is called for the queue.
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx);
+typedef enum {
+	TINA_RUN_LOOP, // Run jobs from the queue until tina_scheduler_interrupt() is called for the queue.
+	TINA_RUN_FLUSH, // Run jobs from the queue until it's empty.
+	TINA_RUN_SINGLE, // Run a single job.
+} tina_run_mode;
+
+// Run jobs in the given queue based on the mode, returns false if no jobs were run.
+bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, tina_run_mode mode);
 // Interrupt execution of a queue on all threads as soon as their current jobs finish.
 void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx);
 
@@ -364,45 +365,29 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 	}
 }
 
-bool tina_scheduler_pump(tina_scheduler* sched, unsigned queue_idx){
-	_TINA_MUTEX_LOCK(sched->_lock);
-	
-	_tina_queue* queue = _tina_get_queue(sched, queue_idx);
-	tina_job* job = _tina_queue_next_job(queue);
-	if(job) _tina_job_execute(sched, job);
-	
-	_TINA_MUTEX_UNLOCK(sched->_lock);
-	return job != NULL;
-}
-
-void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx){
+bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, unsigned mode){
+	bool ran = false;
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		_tina_queue* queue = _tina_get_queue(sched, queue_idx);
-		unsigned stamp = queue->interrupt_stamp;
 		
 		// Keep looping until the interrupt stamp is incremented.
-		while(queue->interrupt_stamp == stamp){
+		unsigned stamp = queue->interrupt_stamp;
+		while(mode != TINA_RUN_LOOP || queue->interrupt_stamp == stamp){
 			tina_job* job = _tina_queue_next_job(queue);
 			if(job){
 				_tina_job_execute(sched, job);
-			} else {
+				ran = true;
+				if(mode == TINA_RUN_SINGLE) break;
+			} else if(mode == TINA_RUN_LOOP){
 				// Sleep until more work is added to the queue.
 				queue->semaphore_count++;
 				_TINA_COND_WAIT(queue->semaphore_signal, sched->_lock);
+			} else {
+				break;
 			}
 		}
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
-}
-
-void tina_scheduler_flush(tina_scheduler* sched, unsigned queue_idx){
-	_TINA_MUTEX_LOCK(sched->_lock); {
-		_tina_queue* queue = _tina_get_queue(sched, queue_idx);
-		
-		while(true){
-			tina_job* job = _tina_queue_next_job(queue);
-			if(job) _tina_job_execute(sched, job); else break;
-		}
-	} _TINA_MUTEX_UNLOCK(sched->_lock);
+	return ran;
 }
 
 void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx){
