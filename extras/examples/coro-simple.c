@@ -35,7 +35,7 @@ int main(int argc, const char *argv[]){
 	// Optionally set some debugging values.
 	coro->name = "MyCoro";
 	
-	// Call tina_yield() to switch coroutines.
+	// Call tina_resume() to call into the other coroutine.
 	// You can optionally pass a value through to the coroutine as well.
 	while(!coro->completed) tina_resume(coro, 0);
 	
@@ -55,6 +55,7 @@ static uintptr_t coro_body(tina* coro, uintptr_t value){
 	
 	for(unsigned i = 0; i < 3; i++){
 		printf("coro_body(): %u\n", i);
+		// Yielding suspends this coroutine and returns control back to the caller.
 		tina_yield(coro, 0);
 	}
 	
