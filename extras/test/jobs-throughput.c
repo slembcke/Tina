@@ -78,7 +78,7 @@ int main(int argc, const char *argv[]){
 	unsigned seconds = 10;
 	thrd_sleep(&(struct timespec){.tv_sec = seconds}, NULL);
 	
-	tina_scheduler_pause(SCHED);
+	tina_scheduler_interrupt(SCHED, 0);
 	common_destroy_worker_threads();
 	
 	printf("exiting with count: %dK tasks/sec\n", COUNT/1000/seconds);

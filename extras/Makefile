@@ -19,6 +19,7 @@ COMMON_OBJ = \
 
 TESTS = \
 	test/jobs-throughput \
+	test/jobs-wait \
 
 EXAMPLES = \
 	examples/coro-simple \
