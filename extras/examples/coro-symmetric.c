@@ -29,11 +29,10 @@ static uintptr_t body_b(tina* this_coro, uintptr_t value){
 int main(void){
 	printf("Starting on the main coroutine.\n");
 	
-	// Create a dummy coroutine for the main thread so we have a target to swith from/to using the symmetric API.
-	// This doesn't allocate anything, Tina just needs somewhere to store the thread's context.
-	tina dummy_coro;
-	coro_main = tina_init_dummy(&dummy_coro);
-	// NOTE: 'tina_init_dummy()' returns the pointer passed to it after initializing it as a convenience.
+	// Create an empty coroutine for the main thread so we have a target to switch from/to using the symmetric API.
+	// This makes a coroutine without allocating a new stack for it, Tina just needs somewhere to store the thread's context.
+	tina main_coro = TINA_EMPTY;
+	coro_main = &main_coro;
 	
 	// Create the other coroutines.
 	coro_a = tina_init(NULL, 64*1024, body_a, NULL);

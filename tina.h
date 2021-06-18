@@ -68,7 +68,7 @@ struct tina {
 // Symmetric coroutines are slightly more flexible, but more complicated to use correctly.
 // They can swap between coroutines any which way, and aren't required to eventually yield back to the coroutine that
 // resumed them. To switch between symmetric coroutines, you need to pass the current ('from') and next ('to') coroutines
-// to 'tina_swap()'. To make a symmetric coroutine for an existing thread you need to make use 'tina_init_dummy()' to make
+// to 'tina_swap()'. To make a symmetric coroutine for an existing thread you need to copy TINA_EMPTY to make
 // an empty coroutine to hold it's execution context. (See extras/examples/symmetric.c)
 // Additionally, the body functions for symmetric coroutines must *NOT* return. This will trigger an assertion or abort().
 
@@ -81,10 +81,9 @@ struct tina {
 // The initialized coroutine is not started. The first time you call 'tina_yield()' or 'tina_swap()' will start it.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
-// Initialize an empty coroutine that can be used as the 'from' argument in 'tina_swap()' to stand-in for an existing OS thread.
-// Returns the pointer passed to it for consistency with 'tina_init()'.
+// A prototype for an empty coroutine. Copy this to initialize an empty coroutine that doesn't reference a new stack.
 // You only need this if you are using symmetric coroutines via 'tina_swap()'. (See above)
-tina* tina_init_dummy(tina* coro);
+extern const tina TINA_EMPTY;
 
 // Resume running a coroutine, passing a value to the coroutine.
 uintptr_t tina_resume(tina* coro, uintptr_t value);
@@ -106,6 +105,8 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 // Magic number to help assert for memory corruption errors.
 #define _TINA_MAGIC 0x54494E41ul
 
+const tina TINA_EMPTY = {._magic = _TINA_MAGIC};
+
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
 extern const uint64_t _tina_swap[];
@@ -124,17 +125,11 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	coro->_magic = _TINA_MAGIC;
 	
 	// Temporary empty coroutine for the init function to use.
-	tina caller = {};
-	coro->_caller = tina_init_dummy(&caller);
+	tina caller = TINA_EMPTY;
+	coro->_caller = &caller;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
 	return ((init_func*)_tina_init_stack)(coro, body, &caller._sp, (uint8_t*)buffer + size);
-}
-
-tina* tina_init_dummy(tina* coro){
-	*coro = (tina){};
-	coro->_magic = _TINA_MAGIC;
-	return coro;
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -161,8 +156,8 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value){
 
 uintptr_t tina_resume(tina* coro, uintptr_t value){
 	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
-	tina dummy = {};
-	coro->_caller = tina_init_dummy(&dummy);
+	tina dummy = TINA_EMPTY;
+	coro->_caller = &dummy;
 	return tina_swap(&dummy, coro, value);
 }
 
