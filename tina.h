@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdalign.h>
 #include <stdlib.h>
 
 #ifdef __cplusplus
@@ -103,8 +104,11 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 #endif
 
 const tina TINA_EMPTY = {
+	.user_data = NULL, .name = "TINA_EMPTY",
+	.buffer = NULL, .size = 0,
+	.completed = false,
 	// Magic number to help assert for memory corruption errors.
-	._magic = 0x54494E41ul
+	._caller = NULL, ._sp = NULL, ._magic = 0x54494E41ul,
 };
 
 // Symbols for the assembly functions.
@@ -124,12 +128,12 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	coro->size = size;
 	coro->_magic = TINA_EMPTY._magic;
 	
-	// Temporary empty coroutine for the init function to use.
-	tina caller = TINA_EMPTY;
-	coro->_caller = &caller;
+	// Empty coroutine for the init function to use for a return location.
+	tina dummy = TINA_EMPTY;
+	coro->_caller = &dummy;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)_tina_init_stack)(coro, body, &caller._sp, (uint8_t*)buffer + size);
+	return ((init_func*)_tina_init_stack)(coro, body, &dummy._sp, (uint8_t*)buffer + size);
 }
 
 void _tina_context(tina* coro, tina_func* body){
