@@ -291,12 +291,14 @@ void tina_scheduler_free(tina_scheduler* sched){
 	free(sched);
 }
 
-void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx){
+static inline _tina_queue* _tina_get_queue(tina_scheduler* sched, unsigned queue_idx){
 	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
-	_TINA_ASSERT(fallback_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
-	
-	_tina_queue* parent = &sched->_queues[queue_idx];
-	_tina_queue* fallback = &sched->_queues[fallback_idx];
+	return &sched->_queues[queue_idx];
+}
+
+void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx){
+	_tina_queue* parent = _tina_get_queue(sched, queue_idx);
+	_tina_queue* fallback = _tina_get_queue(sched, fallback_idx);
 	_TINA_ASSERT(parent->fallback == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
 	_TINA_ASSERT(fallback->parent == NULL, "Tina Jobs Error: Queue already has a fallback assigned.");
 
@@ -323,55 +325,85 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 	} while((queue = queue->parent));
 }
 
+static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
+	_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
+	// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
+	if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
+	
+	// Yield to the job's fiber to run it.
+	switch(tina_resume(job->fiber, (uintptr_t)job)){
+		case _TINA_STATUS_ABORTED: {
+			// Worker fiber state not reset with a clean exit. Need to do it explicitly.
+			tina_init(job->fiber, job->fiber->size, _tina_jobs_fiber, sched);
+		}; // FALLTHROUGH
+		case _TINA_STATUS_COMPLETE: {
+			// Return the components to the pools.
+			sched->_job_pool.arr[sched->_job_pool.count++] = job;
+			sched->_fibers.arr[sched->_fibers.count++] = job->fiber;
+			
+			// Did it have a group, and was it the last job being waited for?
+			tina_group* group = job->group;
+			if(group && --group->_count == 0 && group->_job){
+				// Push the waiting job to the front of it's queue.
+				_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
+				queue->arr[queue->head++ & queue->mask] = group->_job;
+				_tina_queue_signal(queue);
+			}
+		} break;
+		case _TINA_STATUS_YIELDING:{
+			// Push the job to the back of the queue.
+			_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
+			queue->arr[queue->head++ & queue->mask] = job;
+			_tina_queue_signal(queue);
+		} break;
+		case _TINA_STATUS_WAITING: {
+			// Do nothing. The job will be re-enqueued when it's done waiting.
+		} break;
+	}
+}
+
 void tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, bool flush){
 	// Job loop is only unlocked while running a job or waiting for a wakeup.
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		sched->_pause = false;
 		
-		_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
-		_tina_queue* queue = &sched->_queues[queue_idx];
+		_tina_queue* queue = _tina_get_queue(sched, queue_idx);
 		
 		// If not in flush mode, keep looping until the scheduler is paused.
 		while(flush || !sched->_pause){
 			tina_job* job = _tina_queue_next_job(queue);
 			if(job){
-				_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
-				// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
-				if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
-				
-				// Yield to the job's fiber to run it.
-				switch(tina_resume(job->fiber, (uintptr_t)job)){
-					case _TINA_STATUS_ABORTED: {
-						// Worker fiber state not reset with a clean exit. Need to do it explicitly.
-						tina_init(job->fiber, job->fiber->size, _tina_jobs_fiber, sched);
-					}; // FALLTHROUGH
-					case _TINA_STATUS_COMPLETE: {
-						// Return the components to the pools.
-						sched->_job_pool.arr[sched->_job_pool.count++] = job;
-						sched->_fibers.arr[sched->_fibers.count++] = job->fiber;
-						
-						// Did it have a group, and was it the last job being waited for?
-						tina_group* group = job->group;
-						if(group && --group->_count == 0 && group->_job){
-							// Push the waiting job to the front of it's queue.
-							_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
-							queue->arr[queue->head++ & queue->mask] = group->_job;
-							_tina_queue_signal(queue);
-						}
-					} break;
-					case _TINA_STATUS_YIELDING:{
-						// Push the job to the back of the queue.
-						_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
-						queue->arr[queue->head++ & queue->mask] = job;
-						_tina_queue_signal(queue);
-					} break;
-					case _TINA_STATUS_WAITING: {
-						// Do nothing. The job will be re-enqueued when it's done waiting.
-					} break;
-				}
+				_tina_job_execute(sched, job);
 			} else if(flush){
 				// No more tasks so we are done if run in flush mode.
 				break;
+			} else {
+				// Sleep until more work is added to the queue.
+				queue->semaphore_count++;
+				_TINA_COND_WAIT(queue->semaphore_signal, sched->_lock);
+			}
+		}
+	} _TINA_MUTEX_UNLOCK(sched->_lock);
+}
+bool tina_scheduler_run_single(tina_scheduler* sched, unsigned queue_idx){
+	_TINA_MUTEX_LOCK(sched->_lock);
+	
+	_tina_queue* queue = _tina_get_queue(sched, queue_idx);
+	tina_job* job = _tina_queue_next_job(queue);
+	if(job) _tina_job_execute(sched, job);
+	
+	_TINA_MUTEX_UNLOCK(sched->_lock);
+	return job != NULL;
+}
+
+void tina_scheduler_run2(tina_scheduler* sched, unsigned queue_idx){
+	_TINA_MUTEX_LOCK(sched->_lock); {
+		_tina_queue* queue = _tina_get_queue(sched, queue_idx);
+		
+		while(true){
+			tina_job* job = _tina_queue_next_job(queue);
+			if(job){
+				_tina_job_execute(sched, job);
 			} else {
 				// Sleep until more work is added to the queue.
 				queue->semaphore_count++;
@@ -406,14 +438,13 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 		_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
 		for(size_t i = 0; i < count; i++){
 			_TINA_ASSERT(list[i].func, "Tina Jobs Error: Job must have a body function.");
-			_TINA_ASSERT(list[i].queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
 			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .group = group};
 			
 			// Push it to the proper queue.
-			_tina_queue* queue = &sched->_queues[list[i].queue_idx];
+			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
 			queue->arr[queue->head++ & queue->mask] = job;
 			_tina_queue_signal(queue);
 		}
