@@ -20,13 +20,12 @@
 	SOFTWARE.
 */
 
+#ifndef TINA_JOBS_H
+#define TINA_JOBS_H
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <stdalign.h>
-
-#ifndef TINA_JOBS_H
-#define TINA_JOBS_H
 
 #ifdef __cplusplus
 extern "C" {

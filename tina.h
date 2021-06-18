@@ -121,7 +121,10 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	if(buffer == NULL) buffer = malloc(size);
 	
 	// Make sure 'buffer' is properly aligned.
-	tina* coro = (tina*)(-(-(uintptr_t)buffer & -sizeof(void*)));
+	uintptr_t aligned = -(-(uintptr_t)buffer & -alignof(tina));
+	size -= aligned - (uintptr_t)buffer;
+	
+	tina* coro = (tina*)aligned;
 	coro->user_data = user_data;
 	coro->completed = false;
 	coro->buffer = buffer;
