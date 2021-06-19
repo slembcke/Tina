@@ -17,7 +17,7 @@ Coroutines are little lightweight userspace threading primitives, and they are s
 * Minimal code footprint. Currently ~200 sloc
 
 ## Limitations:
-* Obsolete or uncommon ABIs aren't unsupported (ex: 32 bit x86, MIPS, etc. Pull requests are welcome)
+* Obsolete or uncommon ABIs aren't supported (ex: 32 bit x86, MIPS, etc. Pull requests are welcome)
 * WASM explicitly forbids stackful coroutines :(
 * No RISCV support... yet ;)
 * Minimal built-in stack overflow protection: Bring your own memory means you need to bring your own guard pages and security too
