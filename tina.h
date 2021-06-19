@@ -27,7 +27,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdalign.h>
-#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -91,6 +90,8 @@ extern const tina TINA_EMPTY;
 uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
+
+#include <stdlib.h>
 
 #ifndef _TINA_ASSERT
 #include <stdio.h>

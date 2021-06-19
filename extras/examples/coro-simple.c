@@ -26,21 +26,26 @@
 #include "tina.h"
 
 static uintptr_t coro_body(tina* coro, uintptr_t value);
-static void coro_error(tina* coro, const char* message);
 
 int main(int argc, const char *argv[]){
 	// Initialize a coroutine with some stack space, a body function, and some user data.
-	tina* coro = tina_init(NULL, 1024*1024, coro_body, "A user data pointer.");
+	void* user_data = "An optional user data pointer";
+	tina* coro = tina_init(NULL, 1024*1024, coro_body, user_data);
 
-	// Optionally set some debugging values.
+	// You can also name your coroutines for debugging purposes.
 	coro->name = "MyCoro";
 	
-	// Call tina_resume() to call into the other coroutine.
-	// You can optionally pass a value through to the coroutine as well.
-	while(!coro->completed) tina_resume(coro, 0);
+	// Call tina_resume() to switch to the coroutine.
+	// The body function will now start, and '123' will be passed as the 'value' arg.
+	uintptr_t value = tina_resume(coro, 123);
 	
-	printf("Resuming again is an error and should throw an assertion (or abort() if assertions are disabled).\n");
-	printf("Wait for it...\n");
+	// Now each time you call tina_resume() afterwards it will continue executing from the most recent tina_yield().
+	// The value returned by tina_resume() will be the value passed to the matching tina_yield(), and vice-versa.
+	// When the body function returns, that value will also be returned from tina_resume() and 'tina.complete' will become true.
+	while(!coro->completed) tina_resume(coro, 321);
+	
+	// The coroutine body function has returned. So attempting to resume it again will fail.
+	printf("About to call tina_resume() on a completed coroutine. This will crash.\n");
 	tina_resume(coro, 0);
 	
 	free(coro->buffer);

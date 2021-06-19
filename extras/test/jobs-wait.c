@@ -20,8 +20,6 @@
 	SOFTWARE.
 */
 
-// NOTE: This whole test is kinda dumb in that it sort of just tests shared memory performance, but whatever.
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdatomic.h>

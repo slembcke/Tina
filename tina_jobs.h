@@ -118,6 +118,8 @@ static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char*
 
 #ifdef TINA_JOBS_IMPLEMENTATION
 
+#include <stdlib.h>
+
 // Minimum alignment when packing allocations.
 #define _TINA_JOBS_MIN_ALIGN 16
 
@@ -363,7 +365,7 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 	}
 }
 
-bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, unsigned mode){
+bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, tina_run_mode mode){
 	bool ran = false;
 	_TINA_MUTEX_LOCK(sched->_lock); {
 		_tina_queue* queue = _tina_get_queue(sched, queue_idx);
