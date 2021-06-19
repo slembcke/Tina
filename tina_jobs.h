@@ -35,11 +35,8 @@ extern "C" {
 typedef struct tina_scheduler tina_scheduler;
 // Opaque type for a job.
 typedef struct tina_job tina_job;
-// Opaque type for a job group.
-typedef struct tina_group tina_group;
 
-// Job function prototype.
-// 'job' is a reference to the job to use with the yield/switch/abort functions.
+// Job body function prototype.
 typedef void tina_job_func(tina_job* job);
 
 typedef struct {
@@ -49,28 +46,29 @@ typedef struct {
 	tina_job_func* func;
 	// User defined job context pointer. (optional)
 	void* user_data;
-	// User defined job index. (optional)
+	// User defined job index. (optional, useful for parallel-for constructs)
 	uintptr_t user_idx;
 	// Index of the queue to run the job on.
 	unsigned queue_idx;
 } tina_job_description;
 
-// Get the description for a job.
+// Get the description associated with a job.
 const tina_job_description* tina_job_get_description(tina_job* job);
 
 // Counter used to signal when a group of jobs is done.
 // Note: Must be zero-initialized before use.
-struct tina_group {
+typedef struct {
 	// The maximum number of jobs that can be added to the group, or 0 for no limit.
 	// This makes it easy to throttle the number of jobs added to a scheduler.
+	// See also tina_scheduler_enqueue_batch()
 	const unsigned max_count;
 	
 	// Private:
 	tina_job* _job;
 	unsigned _count;
-};
+} tina_group;
 
-// Get the allocation size for a jobs instance.
+// Get the allocation size for a scheduler instance.
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size);
 // Initialize memory for a scheduler. Use tina_scheduler_size() to figure out how much you need.
 tina_scheduler* tina_scheduler_init(void* buffer, unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size);
@@ -82,29 +80,29 @@ tina_scheduler* tina_scheduler_new(unsigned job_count, unsigned queue_count, uns
 // Convenience destructor. Destroy and free a scheduler.
 void tina_scheduler_free(tina_scheduler* sched);
 
-// Set link a pair of queues for job prioritization. When the main queue is empty it will steal jobs from the fallback.
+// Link a pair of queues for job prioritization. When the 'queue_idx' is empty it will steal jobs from 'fallback_idx'.
 void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx);
 
 typedef enum {
-	TINA_RUN_LOOP, // Run jobs from the queue until tina_scheduler_interrupt() is called for the queue.
-	TINA_RUN_FLUSH, // Run jobs from the queue until it's empty.
-	TINA_RUN_SINGLE, // Run a single job.
+	TINA_RUN_LOOP, // Run jobs from a queue until tina_scheduler_interrupt() is called.
+	TINA_RUN_FLUSH, // Run jobs from a queue until empty, or until all remaing jobs are waiting.
+	TINA_RUN_SINGLE, // Run a single non-waiting job from a queue.
 } tina_run_mode;
 
 // Run jobs in the given queue based on the mode, returns false if no jobs were run.
 bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, tina_run_mode mode);
-// Interrupt execution of a queue on all threads as soon as their current jobs finish.
+// Interrupt TINA_RUN_LOOP execution of a queue on all active threads as soon as their current jobs finish.
 void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx);
 
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
 // Returns the number of jobs added which may be less than 'count' based on the value of 'group->max_count'.
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
-// Yield the current job until the group has 'threshold' or less remaining jobs.
-// 'threshold' is useful to throttle a producer job. Allowing it to keep a pipeline full without overflowing it.
+// Yield the current job until the group has 'threshold' or fewer remaining jobs.
+// 'threshold' is useful to throttle a producer job. Allowing it to keep a consumers busy without a lot of queued items.
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
-// Yield the current job and reschedule it to run again later.
+// Yield the current job and reschedule at the back of the queue.
 void tina_job_yield(tina_job* job);
-// Yield the current job and reschedule it to run on a different queue.
+// Yield the current job and reschedule it at the back of a different queue.
 // Returns the old queue the job was scheduled on.
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.

@@ -36,9 +36,9 @@ extern "C" {
 // Coroutine type.
 typedef struct tina tina;
 
-// Coroutine body function type.
+// Coroutine body function prototype.
 // 'value' will be the value passed to the initial call to tina_resume() that starts the coroutine.
-// The return value will be returned from the tina_resume() call that activated the coroutine.
+// The return value will be returned from the final tina_resume() call.
 typedef uintptr_t tina_func(tina* coro, uintptr_t value);
 
 struct tina {
@@ -53,28 +53,11 @@ struct tina {
 	// Has the coroutine's body function exited? (readonly)
 	bool completed;
 	
-	// Private implementation details.
+	// Private:
 	tina* _caller;
 	void* _sp;
 	uint32_t _magic;
 };
-
-// Symmetric vs Assymetric coroutines:
-
-// Assymmetric coroutines are simpler to use because they act a bit more like regular functions. You resume an assymetric
-// and it eventually must yield back to the coroutine that resumed it. This is similar to a function call and return.
-// When an assymetric coroutine's body function returns, it automatically yields back to it's caller.
-// Attempting to resume it after than will trigger an assertion or abort()
-
-// Symmetric coroutines are slightly more flexible, but more complicated to use correctly.
-// They can swap between coroutines any which way, and aren't required to eventually yield back to the coroutine that
-// resumed them. To switch between symmetric coroutines, you need to pass the current ('from') and next ('to') coroutines
-// to 'tina_swap()'. To make a symmetric coroutine for an existing thread you need to copy TINA_EMPTY to make
-// an empty coroutine to hold it's execution context. (See extras/examples/symmetric.c)
-// Additionally, the body functions for symmetric coroutines must *NOT* return. This will trigger an assertion or abort().
-
-// Unless you are sure you know what you are doing, do *NOT* mix symmetric and assymetric coroutines together.
-// If in doubt use assymetric coroutines using 'tina_resume()' and 'tina_yield()' since they are simpler.
 
 // Initialize a coroutine into a memory buffer.
 // If 'buffer' is NULL, it will malloc() one for you. You are responsible to call free(tina.buffer) when you are done with it.
@@ -82,18 +65,29 @@ struct tina {
 // The initialized coroutine is not started. The first time you call 'tina_yield()' or 'tina_swap()' will start it.
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 
-// A prototype for an empty coroutine. Copy this to initialize an empty coroutine that doesn't reference a new stack.
-// You only need this if you are using symmetric coroutines via 'tina_swap()'. (See above)
-extern const tina TINA_EMPTY;
+// Assymmetric coroutines are simpler to use because they act a bit more like regular functions. You resume an assymmetric
+// and it eventually must yield back to the coroutine that resumed it. This is similar to a function call and return.
+// When an assymmetric coroutine's body function returns, it automatically yields back to it's caller.
+// Attempting to resume it after than will trigger an assertion or abort()
 
-// Resume running a coroutine, passing a value to the coroutine.
+// Resume running an assymmetric coroutine, passing a value to the coroutine.
 uintptr_t tina_resume(tina* coro, uintptr_t value);
-
-// Yield a coroutine back to it's caller, and pass back a value.
+// Yield an assymmetric coroutine back to it's caller, and pass back a value.
 uintptr_t tina_yield(tina* coro, uintptr_t value);
 
-// Swap between two coroutines symmetrically, passing a value between them.
-// You only need this function if you are using symmetric coroutines. (See above)
+// Symmetric coroutines (sometimes called fibers) are slightly more flexible, but also slightly more complicated.
+// You can transfer control between any two symmetric coroutines at any time, and there is no caller/callee relationship.
+// To switch between symmetric coroutines, you need to pass the current ('from') and next ('to') coroutines to 'tina_swap()'.
+// To make a symmetric coroutine for an existing thread you need to copy TINA_EMPTY to hold it's execution context.
+// It is an error for the body functions of symmetric coroutines to return. Lastly, it is NOT recommended (although possible)
+// to mix symmetric and assymetric coroutines together. Consider it to be undefined behavior.
+// See extras/examples/symmetric.c for more info.
+
+// A prototype for an empty symmetric coroutine. Copy this to initialize an empty coroutine that doesn't reference a new stack.
+// You only need this if you are using symmetric coroutines via 'tina_swap()'.
+extern const tina TINA_EMPTY;
+
+// Swap between two symmetric coroutines, passing a value between them.
 uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
