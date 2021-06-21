@@ -47,7 +47,7 @@ static void wait_countdown_sync(tina_job* job){
 
 static void test_wait_countdown_sync(tina_job* job){
 	unsigned counter = 64;
-	tina_group group;
+	tina_group group = {};
 	
 	// Run sub-jobs on the main queue so we can yield them 2 at a time.
 	for(unsigned i = 0; i < counter; i++){
@@ -69,7 +69,7 @@ static void wait_countdown_async(tina_job* job){
 
 static void test_wait_countdown_async(tina_job* job){
 	unsigned counter = 1000;
-	tina_group group;
+	tina_group group = {};
 	
 	for(unsigned i = 0; i < counter; i++){
 		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_async, &counter, i, QUEUE_WORK, &group);

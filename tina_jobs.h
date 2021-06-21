@@ -29,6 +29,9 @@
 
 #ifdef __cplusplus
 extern "C" {
+#define noreturn [[noreturn]]
+#else
+#include <stdnoreturn.h>
 #endif
 
 // Opaque type for a scheduler.
@@ -64,7 +67,7 @@ typedef struct {
 	const unsigned max_count;
 	
 	// Private:
-	tina_job* _job;
+	tina_job* _job_list;
 	unsigned _count;
 } tina_group;
 
@@ -106,7 +109,7 @@ void tina_job_yield(tina_job* job);
 // Returns the old queue the job was scheduled on.
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
-void tina_job_abort(tina_job* job);
+noreturn void tina_job_abort(tina_job* job);
 
 // Convenience method. Enqueue a single job.
 // Returns 0 if the group is already full (i.e. group->max_count) and the job was not added.
@@ -144,6 +147,8 @@ struct tina_job {
 	tina_scheduler* scheduler;
 	tina* fiber;
 	tina_group* group;
+	unsigned wait_threshold;
+	tina_job* wait_next;
 };
 
 const tina_job_description* tina_job_get_description(tina_job* job){return &job->desc;}
@@ -328,6 +333,31 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 	} while((queue = queue->parent));
 }
 
+static tina_job* _foobar(tina_scheduler* sched, tina_group* group, tina_job* job){
+	if(job){
+		tina_job* next = _foobar(sched, group, job->wait_next);
+		if(job->wait_threshold <= group->_count){
+			// Push the waiting job to the back of it's queue.
+			_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
+			queue->arr[queue->head++ & queue->mask] = job;
+			_tina_queue_signal(queue);
+			
+			// Unlink from wait list.
+			job->wait_next = NULL;
+			return next;
+		} else {
+			job->wait_next = next;
+		}
+	}
+	
+	return job;
+}
+
+static void _tina_group_decrement(tina_scheduler* sched, tina_group* group){
+	group->_count -= 1;
+	group->_job_list = _foobar(sched, group, group->_job_list);
+}
+
 static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 	_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 	// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
@@ -346,12 +376,7 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 			
 			// Did it have a group, and was it the last job being waited for?
 			tina_group* group = job->group;
-			if(group && --group->_count == 0 && group->_job){
-				// Push the waiting job to the front of it's queue.
-				_tina_queue* queue = &sched->_queues[group->_job->desc.queue_idx];
-				queue->arr[queue->head++ & queue->mask] = group->_job;
-				_tina_queue_signal(queue);
-			}
+			if(group) _tina_group_decrement(sched, group);
 		} break;
 		case _TINA_STATUS_YIELDING:{
 			// Push the job to the back of the queue.
@@ -432,21 +457,19 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 	_TINA_MUTEX_LOCK(job->scheduler->_lock);
-	group->_job = job;
 	
 	// Check if we need to wait at all.
 	if(group->_count > threshold){
-		group->_count -= threshold;
-		// Yield until the counter hits zero.
-		tina_yield(group->_job->fiber, _TINA_STATUS_WAITING);
-		// Restore the counter for the remaining jobs.
-		group->_count += threshold;
+		// Push onto wait list.
+		job->wait_next = group->_job_list;
+		group->_job_list = job;
+		
+		job->wait_threshold = threshold;
+		tina_yield(job->fiber, _TINA_STATUS_WAITING);
+		job->wait_threshold = 0;
 	}
 	
-	// Cleanup.
-	group->_job = NULL;
 	unsigned remaining = group->_count;
-	
 	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 	return remaining;
 }
@@ -472,7 +495,7 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 void tina_job_abort(tina_job* job){
 	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	tina_yield(job->fiber, _TINA_STATUS_ABORTED);
-	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
+	abort(); // Never called;
 }
 
 #endif // TINA_JOB_IMPLEMENTATION

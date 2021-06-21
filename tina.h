@@ -142,7 +142,7 @@ void _tina_context(tina* coro, tina_func* body){
 	// body() has exited, and the coroutine is completed.
 	coro->completed = true;
 	// Yield the final return value back to the calling thread.
-	_TINA_ASSERT(coro->_caller, "Tina Error: Return from coroutine body function not entered using tina_resume().");
+	_TINA_ASSERT(coro->_caller, "Tina Error: You must not return from a symmetric coroutine body function.");
 	tina_yield(coro, value);
 	
 	_TINA_ASSERT(false, "Tina Error: You cannot resume a coroutine after it has finished.");
