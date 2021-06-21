@@ -111,6 +111,12 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
 noreturn void tina_job_abort(tina_job* job);
 
+// Increment a group's value directly. Allows associating jobs (or partial jobs) with multiple groups.
+// Returns the count added which may be less than 'count' based on the value of 'group->max_count'.
+unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count);
+// Decrement a group's value directly to manually mark completion of a task or partial task.
+void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned count);
+
 // Convenience method. Enqueue a single job.
 // Returns 0 if the group is already full (i.e. group->max_count) and the job was not added.
 static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
@@ -333,10 +339,10 @@ static inline void _tina_queue_signal(_tina_queue* queue){
 	} while((queue = queue->parent));
 }
 
-static tina_job* _foobar(tina_scheduler* sched, tina_group* group, tina_job* job){
+static tina_job* _tina_group_process_wait_list(tina_scheduler* sched, tina_group* group, tina_job* job){
 	if(job){
-		tina_job* next = _foobar(sched, group, job->wait_next);
-		if(job->wait_threshold <= group->_count){
+		tina_job* next = _tina_group_process_wait_list(sched, group, job->wait_next);
+		if(group->_count <= job->wait_threshold){
 			// Push the waiting job to the back of it's queue.
 			_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
 			queue->arr[queue->head++ & queue->mask] = job;
@@ -353,9 +359,19 @@ static tina_job* _foobar(tina_scheduler* sched, tina_group* group, tina_job* job
 	return job;
 }
 
-static void _tina_group_decrement(tina_scheduler* sched, tina_group* group){
-	group->_count -= 1;
-	group->_job_list = _foobar(sched, group, group->_job_list);
+static unsigned _tina_group_increment(tina_group* group, unsigned n){
+	if(group->max_count){
+		size_t remaining = group->max_count - group->_count;
+		if(n > remaining) n = remaining;
+	}
+	
+	group->_count += n;
+	return n;
+}
+
+static void _tina_group_decrement(tina_scheduler* sched, tina_group* group, unsigned n){
+	group->_count -= n;
+	group->_job_list = _tina_group_process_wait_list(sched, group, group->_job_list);
 }
 
 static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
@@ -376,7 +392,7 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 			
 			// Did it have a group, and was it the last job being waited for?
 			tina_group* group = job->group;
-			if(group) _tina_group_decrement(sched, group);
+			if(group) _tina_group_decrement(sched, group, 1);
 		} break;
 		case _TINA_STATUS_YIELDING:{
 			// Push the job to the back of the queue.
@@ -427,15 +443,7 @@ void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx){
 
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group){
 	_TINA_MUTEX_LOCK(sched->_lock); {
-		if(group){
-			// Adjust count if necessary.
-			if(group->max_count){
-				size_t remaining = group->max_count - group->_count;
-				if(count > remaining) count = remaining;
-			}
-			
-			group->_count += count;
-		}
+		if(group) count = _tina_group_increment(group, count);
 		
 		_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
 		for(size_t i = 0; i < count; i++){
@@ -443,7 +451,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .group = group};
+			(*job) = (tina_job){.desc = list[i], .scheduler = sched, .fiber = NULL, .group = group, .wait_threshold = 0, .wait_next = NULL};
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
@@ -496,6 +504,20 @@ void tina_job_abort(tina_job* job){
 	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	tina_yield(job->fiber, _TINA_STATUS_ABORTED);
 	abort(); // Never called;
+}
+
+unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned n){
+	_TINA_MUTEX_LOCK(scheduler->_lock);
+	n = _tina_group_increment(group, n);
+	_TINA_MUTEX_UNLOCK(scheduler->_lock);
+	return n;
+}
+
+void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned n){
+	_TINA_MUTEX_LOCK(scheduler->_lock);
+	_TINA_ASSERT(group->_count >= n, "Tina Jobs Error: Group count underflow.");
+	_tina_group_decrement(scheduler, group, n);
+	_TINA_MUTEX_UNLOCK(scheduler->_lock);
 }
 
 #endif // TINA_JOB_IMPLEMENTATION

@@ -83,9 +83,47 @@ static void test_wait_countdown_async(tina_job* job){
 	puts("test_wait_countdown_async() success");
 }
 
+typedef struct {
+	tina_group sync;
+	unsigned done_bits;
+} multi_ctx;
+
+static void wait_multi(tina_job* job){
+	const tina_job_description* desc = tina_job_get_description(job);
+	multi_ctx* ctx = desc->user_data;
+	unsigned idx = desc->user_idx;
+	
+	// Wait two jobs per decrement.
+	tina_job_wait(job, &ctx->sync, idx/2);
+	ctx->done_bits |= 1 << idx;
+}
+
+static void test_wait_multiple(tina_job* job){
+	multi_ctx ctx = {};
+	
+	tina_group_increment(SCHED, &ctx.sync, 16);
+	for(unsigned i = 0; i < 32; i++){
+		tina_scheduler_enqueue(SCHED, NULL, wait_multi, &ctx, i, QUEUE_MAIN, NULL);
+	}
+	
+	unsigned expected_bits = 0;
+	for(int i = 0; i < 16; i++){
+		// Wake up jobs.
+		tina_group_decrement(SCHED, &ctx.sync, 1);
+		// Move to back of the queue.
+		tina_job_yield(job);
+		
+		unsigned expected_bits = (0xFFFFFFFF00000000 >> (2*i + 2)) & 0xFFFFFFFF;
+		assert(ctx.done_bits == expected_bits);
+	}
+	
+	puts("test_wait_multiple() success");
+}
+
 static void run_tests(tina_job* job){
 	test_wait_countdown_sync(job);
 	test_wait_countdown_async(job);
+	test_wait_multiple(job);
 	tina_scheduler_interrupt(SCHED, QUEUE_MAIN);
 }
 
