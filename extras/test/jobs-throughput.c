@@ -58,7 +58,7 @@ static void task_more_tasks(tina_job* task){
 		{.func = task_increment},
 		// Make a task to add more tasks!
 		{.func = task_more_tasks},
-	}, 16, NULL);
+	}, 16, NULL, 0);
 	
 	atomic_fetch_add(&COUNT, 1);
 }

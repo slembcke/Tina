@@ -101,7 +101,7 @@ static void wait_multi(tina_job* job){
 static void test_wait_multiple(tina_job* job){
 	multi_ctx ctx = {};
 	
-	tina_group_increment(SCHED, &ctx.sync, 16);
+	tina_group_increment(SCHED, &ctx.sync, 16, 0);
 	for(unsigned i = 0; i < 32; i++){
 		tina_scheduler_enqueue(SCHED, NULL, wait_multi, &ctx, i, QUEUE_MAIN, NULL);
 	}

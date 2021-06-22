@@ -473,12 +473,11 @@ static void app_display(void){
 	tile_node* request_queue[REQUEST_QUEUE_LENGTH] = {};
 	visit_tile(&TREE_ROOT, request_queue);
 	
-	static tina_group tile_throttle_group = {.max_count = 8};
-	for(int i = 0; i < REQUEST_QUEUE_LENGTH; i++){
-		if(request_queue[i] && tina_scheduler_enqueue(SCHED, "GenTiles", generate_tile_job, request_queue[i], 0, QUEUE_WORK, &tile_throttle_group)){
-			// The node was successfully queued, so mark it as requested.
-			request_queue[i]->status = TILE_STATUS_REQUESTED;
-		}
+	static tina_group tile_throttle_group = {};
+	for(int i = 0; i < REQUEST_QUEUE_LENGTH && request_queue[i]; i++){
+		tina_job_description desc = {.name = "GenTiles", .func = generate_tile_job, .user_data = request_queue[i], .queue_idx = QUEUE_WORK};
+		if(!tina_scheduler_enqueue_batch(SCHED, &desc, 1, &tile_throttle_group, 8)) break;
+		request_queue[i]->status = TILE_STATUS_REQUESTED;
 	}
 	
 	sgl_draw();
