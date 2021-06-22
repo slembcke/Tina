@@ -61,11 +61,6 @@ const tina_job_description* tina_job_get_description(tina_job* job);
 // Counter used to signal when a group of jobs is done.
 // Note: Must be zero-initialized before use.
 typedef struct {
-	// The maximum number of jobs that can be added to the group, or 0 for no limit.
-	// This makes it easy to throttle the number of jobs added to a scheduler.
-	// See also tina_scheduler_enqueue_batch()
-	const unsigned max_count;
-	
 	// Private:
 	tina_job* _job_list;
 	unsigned _count;
@@ -98,8 +93,9 @@ bool tina_scheduler_run(tina_scheduler* sched, unsigned queue_idx, tina_run_mode
 void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx);
 
 // Add jobs to the scheduler, optionally pass the address of a tina_group to track when the jobs have completed.
-// Returns the number of jobs added which may be less than 'count' based on the value of 'group->max_count'.
-unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group);
+// If 'max_group_count' is non-zero, then 'count' will be adjusted based on the number of jobs already in the group.
+// Returns the number of jobs added.
+unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_group_count);
 // Yield the current job until the group has 'threshold' or fewer remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a consumers busy without a lot of queued items.
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -111,17 +107,17 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
 noreturn void tina_job_abort(tina_job* job);
 
-// Increment a group's value directly. Allows associating jobs (or partial jobs) with multiple groups.
-// Returns the count added which may be less than 'count' based on the value of 'group->max_count'.
-unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count);
-// Decrement a group's value directly to manually mark completion of a task or partial task.
+// Increment a group's value directly. Allows associating jobs (or some other unit of work) with multiple groups.
+// Returns the count added which will be adjusted similarly to tina_scheduler_enqueue_batch().
+unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count);
+// Decrement a group's value directly to manually mark completion of some work.
 void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned count);
 
 // Convenience method. Enqueue a single job.
 // Returns 0 if the group is already full (i.e. group->max_count) and the job was not added.
-static inline unsigned tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
+static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
 	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
-	return tina_scheduler_enqueue_batch(sched, &desc, 1, group);
+	unsigned value = tina_scheduler_enqueue_batch(sched, &desc, 1, group, 0);
 }
 
 
@@ -359,18 +355,21 @@ static tina_job* _tina_group_process_wait_list(tina_scheduler* sched, tina_group
 	return job;
 }
 
-static unsigned _tina_group_increment(tina_group* group, unsigned n){
-	if(group->max_count){
-		size_t remaining = group->max_count - group->_count;
-		if(n > remaining) n = remaining;
+static unsigned _tina_group_increment(tina_group* group, unsigned count, unsigned max_count){
+	if(max_count > 0){
+		// Handle already full.
+		if(group->_count >= max_count) return 0;
+		// Adjust count.
+		unsigned remaining = max_count - group->_count;
+		if(count > remaining) count = remaining;
 	}
 	
-	group->_count += n;
-	return n;
+	group->_count += count;
+	return count;
 }
 
-static void _tina_group_decrement(tina_scheduler* sched, tina_group* group, unsigned n){
-	group->_count -= n;
+static void _tina_group_decrement(tina_scheduler* sched, tina_group* group, unsigned count){
+	group->_count -= count;
 	group->_job_list = _tina_group_process_wait_list(sched, group, group->_job_list);
 }
 
@@ -441,9 +440,9 @@ void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx){
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 }
 
-unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group){
+unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_group_count){
 	_TINA_MUTEX_LOCK(sched->_lock); {
-		if(group) count = _tina_group_increment(group, count);
+		if(group) count = _tina_group_increment(group, count, max_group_count);
 		
 		_TINA_ASSERT(sched->_job_pool.count >= count, "Tina Jobs Error: Ran out of jobs.");
 		for(size_t i = 0; i < count; i++){
@@ -506,17 +505,17 @@ void tina_job_abort(tina_job* job){
 	abort(); // Never called;
 }
 
-unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned n){
+unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count){
 	_TINA_MUTEX_LOCK(scheduler->_lock);
-	n = _tina_group_increment(group, n);
+	count = _tina_group_increment(group, count, max_count);
 	_TINA_MUTEX_UNLOCK(scheduler->_lock);
-	return n;
+	return count;
 }
 
-void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned n){
+void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned count){
 	_TINA_MUTEX_LOCK(scheduler->_lock);
-	_TINA_ASSERT(group->_count >= n, "Tina Jobs Error: Group count underflow.");
-	_tina_group_decrement(scheduler, group, n);
+	_TINA_ASSERT(group->_count >= count, "Tina Jobs Error: Group count underflow.");
+	_tina_group_decrement(scheduler, group, count);
 	_TINA_MUTEX_UNLOCK(scheduler->_lock);
 }
 
