@@ -197,11 +197,8 @@ enum _TINA_STATUS {
 static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	tina_scheduler* sched = (tina_scheduler*)fiber->user_data;
 	while(true){
-		// Unlock the mutex while executing a job.
-		_TINA_MUTEX_UNLOCK(sched->_lock); {
-			tina_job* job = (tina_job*)value;
-			job->desc.func(job);
-		} _TINA_MUTEX_LOCK(sched->_lock);
+		tina_job* job = (tina_job*)value;
+		job->desc.func(job);
 		
 		// Yield the completed status back to the scheduler, and recieve the next job.
 		value = tina_yield(fiber, _TINA_STATUS_COMPLETED);
@@ -355,7 +352,7 @@ static tina_job* _tina_group_process_wait_list(tina_scheduler* sched, tina_group
 	return job;
 }
 
-static unsigned _tina_group_increment(tina_group* group, unsigned count, unsigned max_count){
+static inline unsigned _tina_group_increment(tina_group* group, unsigned count, unsigned max_count){
 	if(max_count > 0){
 		// Handle already full.
 		if(group->_count >= max_count) return 0;
@@ -368,7 +365,7 @@ static unsigned _tina_group_increment(tina_group* group, unsigned count, unsigne
 	return count;
 }
 
-static void _tina_group_decrement(tina_scheduler* sched, tina_group* group, unsigned count){
+static inline void _tina_group_decrement(tina_scheduler* sched, tina_group* group, unsigned count){
 	group->_count -= count;
 	group->_job_list = _tina_group_process_wait_list(sched, group, group->_job_list);
 }
@@ -378,13 +375,15 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 	// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
 	if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
 	
-	// Yield to the job's fiber to run it.
+	// Unlock the scheduler while executing the job.
+	_TINA_MUTEX_UNLOCK(sched->_lock);
 	switch(tina_resume(job->fiber, (uintptr_t)job)){
 		case _TINA_STATUS_ABORTED: {
 			// Worker fiber state not reset with a clean exit. Need to do it explicitly.
 			tina_init(job->fiber, job->fiber->size, _tina_jobs_fiber, sched);
 		}; // FALLTHROUGH
 		case _TINA_STATUS_COMPLETED: {
+			_TINA_MUTEX_LOCK(sched->_lock);
 			// Return the components to the pools.
 			sched->_job_pool.arr[sched->_job_pool.count++] = job;
 			sched->_fibers.arr[sched->_fibers.count++] = job->fiber;
@@ -394,6 +393,7 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 			if(group) _tina_group_decrement(sched, group, 1);
 		} break;
 		case _TINA_STATUS_YIELDING:{
+			_TINA_MUTEX_LOCK(sched->_lock);
 			// Push the job to the back of the queue.
 			_tina_queue* queue = &sched->_queues[job->desc.queue_idx];
 			queue->arr[queue->head++ & queue->mask] = job;
@@ -401,6 +401,7 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 		} break;
 		case _TINA_STATUS_WAITING: {
 			// Do nothing. The job will be re-enqueued when it's done waiting.
+			// tina_job_wait() locks the scheduler before yielding.
 		} break;
 	}
 }
@@ -466,43 +467,40 @@ unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	
 	// Check if we need to wait at all.
-	if(group->_count > threshold){
+	unsigned count = group->_count;
+	if(count > threshold){
 		// Push onto wait list.
 		job->wait_next = group->_job_list;
 		group->_job_list = job;
 		
 		job->wait_threshold = threshold;
+		// NOTE: Scheduler will be unlocked after yielding.
 		tina_yield(job->fiber, _TINA_STATUS_WAITING);
 		job->wait_threshold = 0;
+		
+		return group->_count;
+	} else {
+		_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
+		return count;
 	}
-	
-	unsigned remaining = group->_count;
-	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
-	return remaining;
 }
 
 void tina_job_yield(tina_job* job){
-	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
-	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
 }
 
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 	unsigned old_queue = job->desc.queue_idx;
 	if(queue_idx == old_queue) return queue_idx;
 	
-	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	job->desc.queue_idx = queue_idx;
 	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
-	_TINA_MUTEX_UNLOCK(job->scheduler->_lock);
-	
 	return old_queue;
 }
 
 void tina_job_abort(tina_job* job){
-	_TINA_MUTEX_LOCK(job->scheduler->_lock);
 	tina_yield(job->fiber, _TINA_STATUS_ABORTED);
-	abort(); // Never called;
+	abort(); // Unreachable
 }
 
 unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count){
