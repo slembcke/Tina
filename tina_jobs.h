@@ -29,9 +29,6 @@
 
 #ifdef __cplusplus
 extern "C" {
-#define noreturn [[noreturn]]
-#else
-#include <stdnoreturn.h>
 #endif
 
 // Opaque type for a scheduler.
@@ -105,7 +102,7 @@ void tina_job_yield(tina_job* job);
 // Returns the old queue the job was scheduled on.
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 // Immediately abort the execution of a job and mark it as completed.
-noreturn void tina_job_abort(tina_job* job);
+void tina_job_abort(tina_job* job);
 
 // Increment a group's value directly. Allows associating jobs (or some other unit of work) with multiple groups.
 // Returns the count added which will be adjusted similarly to tina_scheduler_enqueue_batch().
@@ -194,7 +191,6 @@ enum _TINA_STATUS {
 };
 
 static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
-	tina_scheduler* sched = (tina_scheduler*)fiber->user_data;
 	while(true){
 		tina_job* job = (tina_job*)value;
 		job->desc.func(job);

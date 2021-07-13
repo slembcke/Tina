@@ -1,4 +1,4 @@
-CFLAGS =  -O0 -g -Wall -Wextra -Werror -Wno-unused -I . -I ..
+CFLAGS =  -O0 -g -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter -I . -I ..
 CFLAGS += -O3 -ffast-math
 
 CXXFLAGS = $(CFLAGS) -Wno-missing-field-initializers

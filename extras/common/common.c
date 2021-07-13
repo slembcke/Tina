@@ -10,7 +10,7 @@
 
 #include "common.h"
 
-#if defined(__unix__)
+#if defined(__unix__) || defined(__APPLE__)
 	#include <unistd.h>
 	static unsigned common_get_cpu_count(void){return sysconf(_SC_NPROCESSORS_ONLN);}
 #elif defined(__WINNT__)
