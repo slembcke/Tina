@@ -308,23 +308,23 @@ void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, un
 	fallback->parent = parent;
 }
 
-static inline tina_job* _tina_queue_next_job(_tina_queue* queue){
-	do {
-		if(queue->head != queue->tail){
-			return (tina_job*)queue->arr[queue->tail++ & queue->mask];
-		}
-	} while((queue = queue->fallback));
-	return NULL;
+static tina_job* _tina_queue_next_job(_tina_queue* queue){
+	if(queue->head != queue->tail){
+		return (tina_job*)queue->arr[queue->tail++ & queue->mask];
+	} else if(queue->fallback){
+		return _tina_queue_next_job(queue->fallback);
+	} else {
+		return NULL;
+	}
 }
 
-static inline void _tina_queue_signal(_tina_queue* queue){
-	do {
-		if(queue->semaphore_count){
-			_TINA_COND_SIGNAL(queue->semaphore_signal);
-			queue->semaphore_count--;
-			break;
-		}
-	} while((queue = queue->parent));
+static void _tina_queue_signal(_tina_queue* queue){
+	if(queue->semaphore_count){
+		_TINA_COND_SIGNAL(queue->semaphore_signal);
+		queue->semaphore_count--;
+	} else if(queue->parent){
+		_tina_queue_signal(queue->parent);
+	}
 }
 
 static tina_job* _tina_group_process_wait_list(tina_scheduler* sched, tina_group* group, tina_job* job){
