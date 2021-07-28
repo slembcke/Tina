@@ -108,8 +108,14 @@ const tina TINA_EMPTY = {
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
+#ifdef __WIN64__
 extern const uint64_t _tina_swap[];
 extern const uint64_t _tina_init_stack[];
+#else
+// Avoid the MSVC hack unless necessary!
+extern uintptr_t _tina_swap(void** sp_from, void** sp_to, uintptr_t value);
+extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+#endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	_TINA_ASSERT(size >= 64*1024, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
