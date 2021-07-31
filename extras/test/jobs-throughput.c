@@ -24,8 +24,16 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdatomic.h>
 #include <assert.h>
+
+#if _MSC_VER
+	// AURGH! Whatever, this is a really dumb throughput test anyway.
+	typedef unsigned atomic_uint;
+	void atomic_init(atomic_uint* ptr, unsigned n){*ptr = n;}
+	void atomic_fetch_add(atomic_uint* ptr, unsigned n){*ptr += n;}
+#else
+	#include <stdatomic.h>
+#endif
 
 #include "tina.h"
 #include "tina_jobs.h"

@@ -13,7 +13,7 @@
 #if defined(__unix__) || defined(__APPLE__)
 	#include <unistd.h>
 	static unsigned common_get_cpu_count(void){return sysconf(_SC_NPROCESSORS_ONLN);}
-#elif defined(__WINNT__)
+#elif defined(_WINDOWS_)
 	static unsigned common_get_cpu_count(void){
 		SYSTEM_INFO sysinfo;
 		GetSystemInfo(&sysinfo);

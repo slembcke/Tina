@@ -110,13 +110,13 @@ const tina TINA_EMPTY = {
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
-#ifdef __WIN64__
-extern const uint64_t _tina_swap[];
-extern const uint64_t _tina_init_stack[];
+#if _MSC_VER
+	extern const uint64_t _tina_swap[];
+	extern const uint64_t _tina_init_stack[];
 #else
 // Avoid the MSVC hack unless necessary!
-extern uintptr_t _tina_swap(void** sp_from, void** sp_to, uintptr_t value);
-extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+	extern uintptr_t _tina_swap(void** sp_from, void** sp_to, uintptr_t value);
+	extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
 #endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
@@ -124,7 +124,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	if(buffer == NULL) buffer = malloc(size);
 	
 	// Make sure 'buffer' is properly aligned.
-	uintptr_t aligned = -(-(uintptr_t)buffer & -_TINA_MAX_ALIGN);
+	uintptr_t aligned = 1 + ~((1 + ~(uintptr_t)buffer) & -_TINA_MAX_ALIGN);
 	size -= aligned - (uintptr_t)buffer;
 	
 	tina* coro = (tina*)aligned;
@@ -272,6 +272,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	#if __GNUC__
 		#define TINA_SECTION_ATTRIBUTE __attribute__((section(".text#")))
 	#elif _MSC_VER
+		#pragma section(".text")
 		#define TINA_SECTION_ATTRIBUTE __declspec(allocate(".text"))
 	#else
 		#error Unknown/untested compiler for Win64. 

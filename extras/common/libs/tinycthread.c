@@ -479,9 +479,8 @@ struct TinyCThreadTSSData {
 };
 
 static tss_dtor_t _tinycthread_tss_dtors[1088] = { NULL, };
-
-static _Thread_local struct TinyCThreadTSSData* _tinycthread_tss_head = NULL;
-static _Thread_local struct TinyCThreadTSSData* _tinycthread_tss_tail = NULL;
+static __declspec(thread) struct TinyCThreadTSSData* _tinycthread_tss_head = NULL;
+static __declspec(thread) struct TinyCThreadTSSData* _tinycthread_tss_tail = NULL;
 
 static void _tinycthread_tss_cleanup (void);
 

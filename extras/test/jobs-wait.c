@@ -22,7 +22,6 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdatomic.h>
 #include <assert.h>
 
 #include "tina.h"
@@ -47,7 +46,7 @@ static void wait_countdown_sync(tina_job* job){
 
 static void test_wait_countdown_sync(tina_job* job){
 	unsigned counter = 64;
-	tina_group group = {};
+	tina_group group = {0};
 	
 	// Run sub-jobs on the main queue so we can yield them 2 at a time.
 	for(unsigned i = 0; i < counter; i++){
@@ -69,7 +68,7 @@ static void wait_countdown_async(tina_job* job){
 
 static void test_wait_countdown_async(tina_job* job){
 	unsigned counter = 1000;
-	tina_group group = {};
+	tina_group group = {0};
 	
 	for(unsigned i = 0; i < counter; i++){
 		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_async, &counter, i, QUEUE_WORK, &group);
@@ -99,7 +98,7 @@ static void wait_multi(tina_job* job){
 }
 
 static void test_wait_multiple(tina_job* job){
-	multi_ctx ctx = {};
+	multi_ctx ctx = {0};
 	
 	tina_group_increment(SCHED, &ctx.sync, 16, 0);
 	for(unsigned i = 0; i < 32; i++){

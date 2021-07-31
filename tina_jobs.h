@@ -200,7 +200,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	return 0;
 }
 
-static inline size_t _tina_jobs_align(size_t n){return -(-n & -_TINA_MAX_ALIGN);}
+static inline size_t _tina_jobs_align(size_t n){return 1 + ~((1 + ~n) & -_TINA_MAX_ALIGN);}
 
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	size_t size = 0;
