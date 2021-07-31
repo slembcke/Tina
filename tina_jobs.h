@@ -121,9 +121,6 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 
 #include <stdlib.h>
 
-// Minimum alignment when packing allocations.
-#define _TINA_JOBS_MIN_ALIGN 16
-
 // Override these. Based on C11 primitives.
 // Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
 #ifndef _TINA_MUTEX_T
@@ -203,7 +200,7 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	return 0;
 }
 
-static inline size_t _tina_jobs_align(size_t n){return -(-n & -_TINA_JOBS_MIN_ALIGN);}
+static inline size_t _tina_jobs_align(size_t n){return -(-n & -_TINA_MAX_ALIGN);}
 
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	size_t size = 0;

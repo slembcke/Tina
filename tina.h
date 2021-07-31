@@ -26,7 +26,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <stdalign.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -98,6 +97,9 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 #define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stderr, _MESSAGE_"\n"); abort();} }
 #endif
 
+// Alignment to use for all types. (MSVC doesn't provide stdalign -_-)
+#define _TINA_MAX_ALIGN 16
+
 const tina TINA_EMPTY = {
 	.user_data = NULL, .name = "TINA_EMPTY",
 	.buffer = NULL, .size = 0,
@@ -122,7 +124,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	if(buffer == NULL) buffer = malloc(size);
 	
 	// Make sure 'buffer' is properly aligned.
-	uintptr_t aligned = -(-(uintptr_t)buffer & -alignof(tina));
+	uintptr_t aligned = -(-(uintptr_t)buffer & -_TINA_MAX_ALIGN);
 	size -= aligned - (uintptr_t)buffer;
 	
 	tina* coro = (tina*)aligned;
