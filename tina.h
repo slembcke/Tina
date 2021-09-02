@@ -110,7 +110,7 @@ const tina TINA_EMPTY = {
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
-#if _MSC_VER
+#if __WIN64__
 	extern const uint64_t _tina_swap[];
 	extern const uint64_t _tina_init_stack[];
 #else
@@ -266,7 +266,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  ret");
 	
 	asm(".att_syntax");
-#elif __WIN64__ || defined(_WIN64)
+#elif __WIN64__
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
 	#if __GNUC__
