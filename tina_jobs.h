@@ -137,6 +137,11 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 #define _TINA_COND_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
 
+#ifndef _TINA_PROFILE_ENTER
+#define _TINA_PROFILE_ENTER(_JOB_)
+#define _TINA_PROFILE_LEAVE(_JOB_, _STATUS_)
+#endif
+
 struct tina_job {
 	tina_job_description desc;
 	tina_scheduler* scheduler;
@@ -178,14 +183,16 @@ struct tina_scheduler {
 	
 	// Keep the jobs and fiber pools in a stack so recently used items are fresh in the cache.
 	_tina_stack _fibers, _job_pool;
+	size_t _fiber_stack_size;
+	tina_func* _fiber_body;
 };
 
-enum _TINA_STATUS {
+typedef enum {
 	_TINA_STATUS_COMPLETED,
 	_TINA_STATUS_WAITING,
 	_TINA_STATUS_YIELDING,
 	_TINA_STATUS_ABORTED,
-};
+} _tina_job_status;
 
 static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	while(true){
@@ -259,11 +266,18 @@ tina_scheduler* tina_scheduler_init(void* _buffer, unsigned job_count, unsigned 
 	}
 	
 	// Initialize the fibers and fill the pool.
+	// Reserve some space for a unique name.
+	static const size_t name_size = 32;
+	sched->_fiber_stack_size = stack_size - name_size;
+	sched->_fiber_body = _tina_jobs_fiber;
 	sched->_fibers.count = fiber_count;
 	for(unsigned i = 0; i < fiber_count; i++){
-		tina* fiber = tina_init(cursor, stack_size, _tina_jobs_fiber, &sched);
-		fiber->name = "TINA JOB FIBER";
-		fiber->user_data = sched;
+		char* name = (char*)cursor;
+		snprintf(name, name_size, "TINA JOBS FIBER %02d", i);
+		
+		tina* fiber = (void*)(cursor + name_size);
+		fiber->name = name;
+		fiber->completed = true;
 		sched->_fibers.arr[i] = fiber;
 		
 		cursor += stack_size;
@@ -366,13 +380,20 @@ static inline void _tina_job_execute(tina_scheduler* sched, tina_job* job){
 	_TINA_ASSERT(sched->_fibers.count > 0, "Tina Jobs Error: Ran out of fibers.");
 	// Assign a fiber and the thread data. (Jobs that are resuming already have a fiber)
 	if(job->fiber == NULL) job->fiber = (tina*)sched->_fibers.arr[--sched->_fibers.count];
+	// Reinit the fiber if it isn't ready.
+	if(job->fiber->completed) job->fiber = tina_init(job->fiber, sched->_fiber_stack_size, sched->_fiber_body, sched);
 	
-	// Unlock the scheduler while executing the job.
+	// Unlock the scheduler while executing the job. Fibers re-lock it before yielding back.
 	_TINA_MUTEX_UNLOCK(sched->_lock);
-	switch(tina_resume(job->fiber, (uintptr_t)job)){
+	
+	_TINA_PROFILE_ENTER(job);
+	_tina_job_status status = tina_resume(job->fiber, (uintptr_t)job);
+	_TINA_PROFILE_LEAVE(job, status);
+	
+	switch(status){
 		case _TINA_STATUS_ABORTED: {
-			// Worker fiber state not reset with a clean exit. Need to do it explicitly.
-			tina_init(job->fiber, job->fiber->size, _tina_jobs_fiber, sched);
+			// Worker fiber state not reset with a clean exit. Mark as completed so it will reinit.
+			job->fiber->completed = true;
 		}; // FALLTHROUGH
 		case _TINA_STATUS_COMPLETED: {
 			_TINA_MUTEX_LOCK(sched->_lock);
