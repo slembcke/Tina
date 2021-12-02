@@ -102,8 +102,7 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 
 const tina TINA_EMPTY = {
 	.user_data = NULL, .name = "TINA_EMPTY",
-	.buffer = NULL, .size = 0,
-	.completed = false,
+	.buffer = NULL, .size = 0, .completed = false,
 	// Magic number to help assert for memory corruption errors.
 	._caller = NULL, ._sp = NULL, ._magic = 0x54494E41ul,
 };
@@ -124,15 +123,15 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	if(buffer == NULL) buffer = malloc(size);
 	
 	// Make sure 'buffer' is properly aligned.
-	uintptr_t aligned = 1 + ~((1 + ~(uintptr_t)buffer) & -_TINA_MAX_ALIGN);
+	uintptr_t aligned = 0 - ((0 - (uintptr_t)buffer) & -_TINA_MAX_ALIGN);
 	size -= aligned - (uintptr_t)buffer;
 	
 	tina* coro = (tina*)aligned;
-	coro->user_data = user_data;
-	coro->completed = false;
-	coro->buffer = buffer;
-	coro->size = size;
-	coro->_magic = TINA_EMPTY._magic;
+	(*coro) = (tina){
+		.user_data = user_data, .name = "<no name>",
+		.buffer = buffer, .size = size, .completed = false,
+		._caller = NULL, ._sp = NULL, ._magic = TINA_EMPTY._magic,
+	};
 	
 	// Empty coroutine for the init function to use for a return location.
 	tina dummy = TINA_EMPTY;

@@ -34,7 +34,7 @@ clean:
 
 $(EXAMPLES) $(TESTS): $(@:=.c) $(COMMON_OBJ)
 
-test/cpp-test: test/cpp-test.cc common/libs/tinycthread.o
+test/cpp-test: test/cpp-test.cc common/libs/tinycthread.o ../tina.h ../tina_jobs.h
 	$(CXX) $^ $(CFLAGS) $(LDFLAGS) -o $@
 
 **/*.o: ../tina.h ../tina_jobs.h
