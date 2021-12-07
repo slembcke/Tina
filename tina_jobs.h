@@ -106,11 +106,6 @@ void tina_job_yield(tina_job* job);
 // Returns the old queue the job was scheduled on.
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
 
-#ifndef TINA_NO_CRT
-// Immediately abort the execution of a job and mark it as completed.
-void tina_job_abort(tina_job* job);
-#endif
-
 // Increment a group's value directly. Allows associating jobs (or some other unit of work) with multiple groups.
 // Returns the count added which will be adjusted similarly to tina_scheduler_enqueue_batch().
 unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count);
@@ -123,13 +118,7 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 	tina_scheduler_enqueue_batch(sched, &desc, 1, group, 0);
 }
 
-
 #ifdef TINA_JOBS_IMPLEMENTATION
-
-#ifndef TINA_NO_CRT
-#include <stdlib.h>
-#include <setjmp.h>
-#endif
 
 // Override these. Based on C11 primitives.
 // Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
@@ -154,13 +143,11 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 
 struct tina_job {
 	tina_job_description desc;
-#ifndef TINA_NO_CRT
-	jmp_buf* abort_env;
-#endif
+	void* user_data;
 	tina* fiber;
 	tina_group* group;
-	unsigned wait_threshold;
 	tina_job* wait_next;
+	unsigned wait_threshold;
 };
 
 tina_scheduler* tina_job_get_scheduler(tina_job* job){return (tina_scheduler*)job->fiber->user_data;}
@@ -202,24 +189,13 @@ typedef enum {
 	_TINA_STATUS_COMPLETED,
 	_TINA_STATUS_WAITING,
 	_TINA_STATUS_YIELDING,
-	_TINA_STATUS_ABORTED,
 } _tina_job_status;
-
-static _tina_job_status _tina_job_execute(tina_job* job){
-#ifndef TINA_NO_CRT
-		jmp_buf abort_env;
-		job->abort_env = &abort_env;
-		if(setjmp(abort_env)) return _TINA_STATUS_ABORTED;
-#endif
-	
-	job->desc.func(job);
-	return _TINA_STATUS_COMPLETED;
-}
 
 static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 	while(true){
 		tina_job* job = (tina_job*)value;
-		value = tina_yield(fiber, _tina_job_execute(job));
+		job->desc.func(job);
+		value = tina_yield(fiber, _TINA_STATUS_COMPLETED);
 	}
 	
 	return 0; // Unreachable.
@@ -405,7 +381,6 @@ static inline void _tina_scheduler_execute_job(tina_scheduler* sched, tina_job* 
 	_TINA_PROFILE_LEAVE(job, status);
 	
 	switch(status){
-		case _TINA_STATUS_ABORTED:
 		case _TINA_STATUS_COMPLETED: {
 			_TINA_MUTEX_LOCK(sched->_lock);
 			// Return the components to the pools.
@@ -475,7 +450,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .abort_env = NULL, .fiber = NULL, .group = group, .wait_threshold = 0, .wait_next = NULL};
+			(*job) = (tina_job){.desc = list[i], .fiber = NULL, .group = group, .wait_threshold = 0, .wait_next = NULL};
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
@@ -521,10 +496,6 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
 	return old_queue;
 }
-
-#ifndef TINA_NO_CRT
-void tina_job_abort(tina_job* job){longjmp(*job->abort_env, 1);}
-#endif
 
 unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count){
 	_TINA_MUTEX_LOCK(scheduler->_lock);
