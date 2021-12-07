@@ -450,7 +450,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .fiber = NULL, .group = group, .wait_threshold = 0, .wait_next = NULL};
+			(*job) = (tina_job){.desc = list[i], .user_data = NULL, .fiber = NULL, .group = group, .wait_threshold = 0, .wait_next = NULL};
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
