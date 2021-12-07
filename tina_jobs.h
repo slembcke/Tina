@@ -27,8 +27,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <setjmp.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -74,10 +72,12 @@ tina_scheduler* tina_scheduler_init(void* buffer, unsigned job_count, unsigned q
 // Destroy a scheduler. Any unfinished jobs will be lost. Flush your queues if you need them to finish gracefully.
 void tina_scheduler_destroy(tina_scheduler* sched);
 
+#ifndef TINA_NO_CRT
 // Convenience constructor. Allocate and initialize a scheduler.
 tina_scheduler* tina_scheduler_new(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size);
 // Convenience destructor. Destroy and free a scheduler.
 void tina_scheduler_free(tina_scheduler* sched);
+#endif
 
 // Link a pair of queues for job prioritization. When the 'queue_idx' is empty it will steal jobs from 'fallback_idx'.
 void tina_scheduler_queue_priority(tina_scheduler* sched, unsigned queue_idx, unsigned fallback_idx);
@@ -105,8 +105,11 @@ void tina_job_yield(tina_job* job);
 // Yield the current job and reschedule it at the back of a different queue.
 // Returns the old queue the job was scheduled on.
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx);
+
+#ifndef TINA_NO_CRT
 // Immediately abort the execution of a job and mark it as completed.
 void tina_job_abort(tina_job* job);
+#endif
 
 // Increment a group's value directly. Allows associating jobs (or some other unit of work) with multiple groups.
 // Returns the count added which will be adjusted similarly to tina_scheduler_enqueue_batch().
@@ -123,7 +126,10 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 
 #ifdef TINA_JOBS_IMPLEMENTATION
 
+#ifndef TINA_NO_CRT
 #include <stdlib.h>
+#include <setjmp.h>
+#endif
 
 // Override these. Based on C11 primitives.
 // Save yourself some trouble and grab https://github.com/tinycthread/tinycthread
@@ -148,7 +154,9 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* nam
 
 struct tina_job {
 	tina_job_description desc;
+#ifndef TINA_NO_CRT
 	jmp_buf* abort_env;
+#endif
 	tina* fiber;
 	tina_group* group;
 	unsigned wait_threshold;
@@ -198,13 +206,14 @@ typedef enum {
 } _tina_job_status;
 
 static _tina_job_status _tina_job_execute(tina_job* job){
+#ifndef TINA_NO_CRT
 		jmp_buf abort_env;
 		job->abort_env = &abort_env;
-		
-		switch(setjmp(abort_env)){
-			case 0: job->desc.func(job);return _TINA_STATUS_COMPLETED;
-			default: return _TINA_STATUS_ABORTED;
-		}
+		if(setjmp(abort_env)) return _TINA_STATUS_ABORTED;
+#endif
+	
+	job->desc.func(job);
+	return _TINA_STATUS_COMPLETED;
 }
 
 static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
@@ -213,11 +222,10 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 		value = tina_yield(fiber, _tina_job_execute(job));
 	}
 	
-	// Unreachable.
-	return 0;
+	return 0; // Unreachable.
 }
 
-static inline size_t _tina_jobs_align(size_t n){return 1 + ~((1 + ~n) & -_TINA_MAX_ALIGN);}
+static inline size_t _tina_jobs_align(size_t n){return -(-n & -_TINA_MAX_ALIGN);}
 
 size_t tina_scheduler_size(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	size_t size = 0;
@@ -300,6 +308,7 @@ void tina_scheduler_destroy(tina_scheduler* sched){
 	for(unsigned i = 0; i < sched->_queue_count; i++) _TINA_COND_DESTROY(sched->_queues[i].semaphore_signal);
 }
 
+#ifndef TINA_NO_CRT
 tina_scheduler* tina_scheduler_new(unsigned job_count, unsigned queue_count, unsigned fiber_count, size_t stack_size){
 	void* buffer = malloc(tina_scheduler_size(job_count, queue_count, fiber_count, stack_size));
 	return tina_scheduler_init(buffer, job_count, queue_count, fiber_count, stack_size);
@@ -309,6 +318,7 @@ void tina_scheduler_free(tina_scheduler* sched){
 	tina_scheduler_destroy(sched);
 	free(sched);
 }
+#endif
 
 static inline _tina_queue* _tina_get_queue(tina_scheduler* sched, unsigned queue_idx){
 	_TINA_ASSERT(queue_idx < sched->_queue_count, "Tina Jobs Error: Invalid queue index.");
@@ -512,7 +522,9 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 	return old_queue;
 }
 
+#ifndef TINA_NO_CRT
 void tina_job_abort(tina_job* job){longjmp(*job->abort_env, 1);}
+#endif
 
 unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsigned count, unsigned max_count){
 	_TINA_MUTEX_LOCK(scheduler->_lock);

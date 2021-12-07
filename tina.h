@@ -54,7 +54,9 @@ struct tina {
 	// Private:
 	tina* _caller;
 	void* _sp;
-	uint32_t _magic;
+	// Stack canary values at the start and end of the buffer.
+	const uint32_t* _canary_end;
+	uint32_t _canary;
 };
 
 // Initialize a coroutine into a memory buffer.
@@ -90,21 +92,24 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 
 #ifdef TINA_IMPLEMENTATION
 
-#include <stdlib.h>
-
-#ifndef _TINA_ASSERT
-#include <stdio.h>
-#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stderr, _MESSAGE_"\n"); abort();} }
+#ifndef TINA_NO_CRT
+	#include <stdlib.h>
+	#ifndef _TINA_ASSERT
+		#include <stdio.h>
+		#define _TINA_ASSERT(_COND_, _MESSAGE_) { if(!(_COND_)){fprintf(stderr, _MESSAGE_"\n"); abort();} }
+	#endif
+#else
+	#define _TINA_ASSERT(_COND_, _MESSAGE_)
 #endif
 
-// Alignment to use for all types. (MSVC doesn't provide stdalign -_-)
-#define _TINA_MAX_ALIGN 16
+// Alignment to use for all types. (MSVC doesn't provide stdalign.h -_-)
+#define _TINA_MAX_ALIGN ((size_t)16)
 
 const tina TINA_EMPTY = {
 	.user_data = NULL, .name = "TINA_EMPTY",
 	.buffer = NULL, .size = 0, .completed = false,
-	// Magic number to help assert for memory corruption errors.
-	._caller = NULL, ._sp = NULL, ._magic = 0x54494E41ul,
+	._caller = NULL, ._sp = NULL,
+	._canary_end = &TINA_EMPTY._canary, ._canary = 0x54494E41ul,
 };
 
 // Symbols for the assembly functions.
@@ -113,24 +118,31 @@ const tina TINA_EMPTY = {
 	extern const uint64_t _tina_swap[];
 	extern const uint64_t _tina_init_stack[];
 #else
-// Avoid the MSVC hack unless necessary!
+	// Avoid the MSVC hack unless necessary!
 	extern uintptr_t _tina_swap(void** sp_from, void** sp_to, uintptr_t value);
 	extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
 #endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	_TINA_ASSERT(size >= 64*1024, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
+#ifndef TINA_NO_CRT
 	if(buffer == NULL) buffer = malloc(size);
+#endif
 	
 	// Make sure 'buffer' is properly aligned.
-	uintptr_t aligned = 0 - ((0 - (uintptr_t)buffer) & -_TINA_MAX_ALIGN);
+	uintptr_t aligned = -(-(uintptr_t)buffer & -_TINA_MAX_ALIGN);
 	size -= aligned - (uintptr_t)buffer;
+	// Find the stack top, saving room for the canary value.
+	void* stack_top = (uint8_t*)buffer + size - sizeof(TINA_EMPTY._canary);
+	*(uint32_t*)stack_top = TINA_EMPTY._canary;
 	
 	tina* coro = (tina*)aligned;
 	(*coro) = (tina){
 		.user_data = user_data, .name = "<no name>",
 		.buffer = buffer, .size = size, .completed = false,
-		._caller = NULL, ._sp = NULL, ._magic = TINA_EMPTY._magic,
+		._caller = NULL, ._sp = NULL,
+		._canary_end = (uint32_t*)stack_top,
+		._canary = TINA_EMPTY._canary,
 	};
 	
 	// Empty coroutine for the init function to use for a return location.
@@ -138,7 +150,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	coro->_caller = &dummy;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)_tina_init_stack)(coro, body, &dummy._sp, (uint8_t*)buffer + size);
+	return ((init_func*)_tina_init_stack)(coro, body, &dummy._sp, stack_top);
 }
 
 void _tina_context(tina* coro, tina_func* body){
@@ -153,12 +165,14 @@ void _tina_context(tina* coro, tina_func* body){
 	tina_yield(coro, value);
 	
 	_TINA_ASSERT(false, "Tina Error: You cannot resume a coroutine after it has finished.");
-	// Crash predictably if assertions are disabled.
-	abort();
+#ifndef TINA_NO_CRT
+	abort(); // Crash predictably if assertions are disabled.
+#endif
 }
 
 uintptr_t tina_swap(tina* from, tina* to, uintptr_t value){
-	_TINA_ASSERT(to->_magic == TINA_EMPTY._magic, "Tina Error: Coroutine has likely had a stack overflow. Bad magic number detected.");
+	_TINA_ASSERT(from->_canary == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack overflow.");
+	_TINA_ASSERT(*from->_canary_end == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack underflow.");
 	typedef uintptr_t swap(void** sp_from, void** sp_to, uintptr_t value);
 	return ((swap*)_tina_swap)(&from->_sp, &to->_sp, value);
 }
