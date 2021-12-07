@@ -23,8 +23,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <unistd.h> // for getstacksize()
-#include <sys/mman.h> // for mmap()
+//#include <unistd.h> // for getstacksize()
+//#include <sys/mman.h> // for mmap()
 
 #include "tina.h"
 

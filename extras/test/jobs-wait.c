@@ -38,7 +38,7 @@ tina_scheduler* SCHED;
 
 static void wait_countdown_sync(tina_job* job){
 	unsigned* counter = tina_job_get_description(job)->user_data;
-	unsigned idx = tina_job_get_description(job)->user_idx;
+	unsigned idx = (unsigned)tina_job_get_description(job)->user_idx;
 	
 	// Let 2 tasks run each time the main job yields.
 	while(*counter > idx + 2) tina_job_yield(job);
@@ -90,7 +90,7 @@ typedef struct {
 static void wait_multi(tina_job* job){
 	const tina_job_description* desc = tina_job_get_description(job);
 	multi_ctx* ctx = desc->user_data;
-	unsigned idx = desc->user_idx;
+	unsigned idx = (unsigned)desc->user_idx;
 	
 	// Wait two jobs per decrement.
 	tina_job_wait(job, &ctx->sync, idx/2);
