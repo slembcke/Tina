@@ -102,6 +102,11 @@ uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
 	#define _TINA_ASSERT(_COND_, _MESSAGE_)
 #endif
 
+#if _MSC_VER
+	// Negation of unsigned integers is well defined. Warning is not helpful.
+	#pragma warning(disable: 4146)
+#endif
+
 // Alignment to use for all types. (MSVC doesn't provide stdalign.h -_-)
 #define _TINA_MAX_ALIGN ((size_t)16)
 
@@ -114,7 +119,7 @@ const tina TINA_EMPTY = {
 
 // Symbols for the assembly functions.
 // These are either defined as inline assembly (GCC/Clang) of binary blobs (MSVC).
-#if __WIN64__
+#if __WIN64__ || _WIN64
 	extern const uint64_t _tina_swap[];
 	extern const uint64_t _tina_init_stack[];
 #else
@@ -279,7 +284,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  ret");
 	
 	asm(".att_syntax");
-#elif __WIN64__
+#elif __WIN64__ || _WIN64
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
 	#if __GNUC__
