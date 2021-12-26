@@ -348,7 +348,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value){
 	asm("  and x3, x3, #~0xF");
 	asm("  mov sp, x3");
 	asm("  mov lr, #0");
-	asm("  b _tina_context");
+	asm("  b " _TINA_SYMBOL(_tina_context));
 
 	asm(_TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
