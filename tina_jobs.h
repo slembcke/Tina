@@ -191,11 +191,11 @@ typedef enum {
 	_TINA_STATUS_YIELDING,
 } _tina_job_status;
 
-static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
+static void* _tina_jobs_fiber(tina* fiber, void* value){
 	while(true){
 		tina_job* job = (tina_job*)value;
 		job->desc.func(job);
-		value = tina_yield(fiber, _TINA_STATUS_COMPLETED);
+		value = tina_yield(fiber, (void*)_TINA_STATUS_COMPLETED);
 	}
 	
 	return 0; // Unreachable.
@@ -377,7 +377,7 @@ static inline void _tina_scheduler_execute_job(tina_scheduler* sched, tina_job* 
 	_TINA_MUTEX_UNLOCK(sched->_lock);
 	
 	_TINA_PROFILE_ENTER(job);
-	_tina_job_status status = (_tina_job_status)tina_resume(job->fiber, (uintptr_t)job);
+	_tina_job_status status = (_tina_job_status)(uintptr_t)tina_resume(job->fiber, job);
 	_TINA_PROFILE_LEAVE(job, status);
 	
 	switch(status){
@@ -474,7 +474,7 @@ unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		
 		job->wait_threshold = threshold;
 		// NOTE: Scheduler will be unlocked after yielding.
-		tina_yield(job->fiber, _TINA_STATUS_WAITING);
+		tina_yield(job->fiber, (void*)_TINA_STATUS_WAITING);
 		job->wait_threshold = 0;
 		
 		return group->_count;
@@ -485,7 +485,7 @@ unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 }
 
 void tina_job_yield(tina_job* job){
-	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	tina_yield(job->fiber, (void*)_TINA_STATUS_YIELDING);
 }
 
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
@@ -493,7 +493,7 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 	if(queue_idx == old_queue) return queue_idx;
 	
 	job->desc.queue_idx = queue_idx;
-	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	tina_yield(job->fiber, (void*)_TINA_STATUS_YIELDING);
 	return old_queue;
 }
 
