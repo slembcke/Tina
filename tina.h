@@ -37,7 +37,7 @@ typedef struct tina tina;
 // Coroutine body function prototype.
 // 'value' will be the value passed to the initial call to tina_resume() that starts the coroutine.
 // The return value will be returned from the final tina_resume() call.
-typedef uintptr_t tina_func(tina* coro, uintptr_t value);
+typedef void* tina_func(tina* coro, void* value);
 
 struct tina {
 	// User defined context pointer passed to tina_init(). (optional)
@@ -71,9 +71,9 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data);
 // Attempting to resume it after than will trigger an assertion or abort()
 
 // Resume running an assymmetric coroutine, passing a value to the coroutine.
-uintptr_t tina_resume(tina* coro, uintptr_t value);
+void* tina_resume(tina* coro, void* value);
 // Yield an assymmetric coroutine back to it's caller, and pass back a value.
-uintptr_t tina_yield(tina* coro, uintptr_t value);
+void* tina_yield(tina* coro, void* value);
 
 // Symmetric coroutines (sometimes called fibers) are slightly more flexible, but also slightly more complicated.
 // You can transfer control between any two symmetric coroutines at any time, and there is no caller/callee relationship.
@@ -88,7 +88,7 @@ uintptr_t tina_yield(tina* coro, uintptr_t value);
 extern const tina TINA_EMPTY;
 
 // Swap between two symmetric coroutines, passing a value between them.
-uintptr_t tina_swap(tina* from, tina* to, uintptr_t value);
+void* tina_swap(tina* from, tina* to, void* value);
 
 #ifdef TINA_IMPLEMENTATION
 
@@ -124,7 +124,7 @@ const tina TINA_EMPTY = {
 	extern const uint64_t _tina_init_stack[];
 #else
 	// Avoid the MSVC hack unless necessary!
-	extern uintptr_t _tina_swap(void** sp_from, void** sp_to, uintptr_t value);
+	extern void* _tina_swap(void** sp_from, void** sp_to, void* value);
 	extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
 #endif
 
@@ -160,7 +160,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 
 void _tina_context(tina* coro, tina_func* body){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
-	uintptr_t value = tina_yield(coro, (uintptr_t)coro);
+	void* value = tina_yield(coro, (void*)coro);
 	// Call the body function with the first value.
 	value = body(coro, value);
 	// body() has exited, and the coroutine is completed.
@@ -175,21 +175,21 @@ void _tina_context(tina* coro, tina_func* body){
 #endif
 }
 
-uintptr_t tina_swap(tina* from, tina* to, uintptr_t value){
+void* tina_swap(tina* from, tina* to, void* value){
 	_TINA_ASSERT(from->_canary == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack overflow.");
 	_TINA_ASSERT(*from->_canary_end == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack underflow.");
-	typedef uintptr_t swap(void** sp_from, void** sp_to, uintptr_t value);
+	typedef void* swap(void** sp_from, void** sp_to, void* value);
 	return ((swap*)_tina_swap)(&from->_sp, &to->_sp, value);
 }
 
-uintptr_t tina_resume(tina* coro, uintptr_t value){
+void* tina_resume(tina* coro, void* value){
 	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
 	tina dummy = TINA_EMPTY;
 	coro->_caller = &dummy;
 	return tina_swap(&dummy, coro, value);
 }
 
-uintptr_t tina_yield(tina* coro, uintptr_t value){
+void* tina_yield(tina* coro, void* value){
 	_TINA_ASSERT(coro->_caller, "Tina Error: tina_yield() called on a coroutine that wasn't resumed.");
 	tina* caller = coro->_caller;
 	coro->_caller = NULL;

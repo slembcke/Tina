@@ -28,7 +28,7 @@ tina* coro_main;
 tina* coro_a;
 tina* coro_b;
 
-static uintptr_t body_a(tina* this_coro, uintptr_t value){
+static void* body_a(tina* this_coro, void* value){
 	printf("In coroutine A\n");
 	
 	// Swap to the next coroutine.
@@ -40,7 +40,7 @@ static uintptr_t body_a(tina* this_coro, uintptr_t value){
 	abort();
 }
 
-static uintptr_t body_b(tina* this_coro, uintptr_t value){
+static void* body_b(tina* this_coro, void* value){
 	printf("In coroutine B\n");
 	
 	// Swap back to the main coroutine.
