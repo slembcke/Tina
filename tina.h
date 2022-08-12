@@ -160,7 +160,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	return ((init_func*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
 }
 
-void _tina_context(tina* coro){
+static void _tina_context(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
 	void* value = tina_yield(coro, coro);
 	// Call the body function with the first value.
