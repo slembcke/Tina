@@ -97,6 +97,9 @@ void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx);
 // If 'max_group_count' is non-zero, then 'count' will be adjusted based on the number of jobs already in the group.
 // Returns the number of jobs added.
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_group_count);
+// Add many jobs to the scheduler that share the same description, but use sequential indexes.
+// It will schedule 'count' jobs with indexes from 0 to count - 1.
+void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned queue_idx, tina_group* group);
 // Yield the current job until the group has 'threshold' or fewer remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a consumers busy without a lot of queued items.
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -113,8 +116,8 @@ unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsi
 void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned count);
 
 // Convenience method. Enqueue a single job.
-static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
-	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
+static inline void tina_scheduler_enqueue(tina_scheduler* sched, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
+	tina_job_description desc = {.name = NULL, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
 	tina_scheduler_enqueue_batch(sched, &desc, 1, group, 0);
 }
 
@@ -460,6 +463,25 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 	} _TINA_MUTEX_UNLOCK(sched->_lock);
 	
 	return count;
+}
+
+void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, uint count, unsigned queue_idx, tina_group* group){
+	uint cursor = 0;
+	tina_job_description desc[256];
+	
+	for(uint i = 0; i < count; i++){
+		// Push description
+		desc[cursor++] = (tina_job_description){.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
+		
+		// Check if the buffer is full.
+		if(cursor == 256){
+			tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
+			cursor = 0;
+		};
+	}
+	
+	// Queue the remainder.
+	if(cursor) tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
 }
 
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
