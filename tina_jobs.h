@@ -465,11 +465,11 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 	return count;
 }
 
-void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, uint count, unsigned queue_idx, tina_group* group){
-	uint cursor = 0;
+void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned queue_idx, tina_group* group){
+	unsigned cursor = 0;
 	tina_job_description desc[256];
 	
-	for(uint i = 0; i < count; i++){
+	for(unsigned i = 0; i < count; i++){
 		// Push description
 		desc[cursor++] = (tina_job_description){.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
 		
