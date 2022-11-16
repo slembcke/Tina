@@ -97,6 +97,9 @@ void tina_scheduler_interrupt(tina_scheduler* sched, unsigned queue_idx);
 // If 'max_group_count' is non-zero, then 'count' will be adjusted based on the number of jobs already in the group.
 // Returns the number of jobs added.
 unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_description* list, unsigned count, tina_group* group, unsigned max_group_count);
+// Add many jobs to the scheduler that share the same description, but use sequential indexes.
+// It will schedule 'count' jobs with indexes from 0 to count - 1.
+void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned queue_idx, tina_group* group);
 // Yield the current job until the group has 'threshold' or fewer remaining jobs.
 // 'threshold' is useful to throttle a producer job. Allowing it to keep a consumers busy without a lot of queued items.
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold);
@@ -113,8 +116,8 @@ unsigned tina_group_increment(tina_scheduler* scheduler, tina_group* group, unsi
 void tina_group_decrement(tina_scheduler* scheduler, tina_group* group, unsigned count);
 
 // Convenience method. Enqueue a single job.
-static inline void tina_scheduler_enqueue(tina_scheduler* sched, const char* name, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
-	tina_job_description desc = {.name = name, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
+static inline void tina_scheduler_enqueue(tina_scheduler* sched, tina_job_func* func, void* user_data, uintptr_t user_idx, unsigned queue_idx, tina_group* group){
+	tina_job_description desc = {.name = NULL, .func = func, .user_data = user_data, .user_idx = user_idx, .queue_idx = queue_idx};
 	tina_scheduler_enqueue_batch(sched, &desc, 1, group, 0);
 }
 
@@ -191,11 +194,11 @@ typedef enum {
 	_TINA_STATUS_YIELDING,
 } _tina_job_status;
 
-static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
+static void* _tina_jobs_fiber(tina* fiber, void* value){
 	while(true){
 		tina_job* job = (tina_job*)value;
 		job->desc.func(job);
-		value = tina_yield(fiber, _TINA_STATUS_COMPLETED);
+		value = tina_yield(fiber, (void*)_TINA_STATUS_COMPLETED);
 	}
 	
 	return 0; // Unreachable.
@@ -377,7 +380,7 @@ static inline void _tina_scheduler_execute_job(tina_scheduler* sched, tina_job* 
 	_TINA_MUTEX_UNLOCK(sched->_lock);
 	
 	_TINA_PROFILE_ENTER(job);
-	_tina_job_status status = (_tina_job_status)tina_resume(job->fiber, (uintptr_t)job);
+	_tina_job_status status = (_tina_job_status)(uintptr_t)tina_resume(job->fiber, job);
 	_TINA_PROFILE_LEAVE(job, status);
 	
 	switch(status){
@@ -462,6 +465,25 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 	return count;
 }
 
+void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned queue_idx, tina_group* group){
+	unsigned cursor = 0;
+	tina_job_description desc[256];
+	
+	for(unsigned i = 0; i < count; i++){
+		// Push description
+		desc[cursor++] = (tina_job_description){.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
+		
+		// Check if the buffer is full.
+		if(cursor == 256){
+			tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
+			cursor = 0;
+		};
+	}
+	
+	// Queue the remainder.
+	if(cursor) tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
+}
+
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 	_TINA_MUTEX_LOCK(tina_job_get_scheduler(job)->_lock);
 	
@@ -474,7 +496,7 @@ unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 		
 		job->wait_threshold = threshold;
 		// NOTE: Scheduler will be unlocked after yielding.
-		tina_yield(job->fiber, _TINA_STATUS_WAITING);
+		tina_yield(job->fiber, (void*)_TINA_STATUS_WAITING);
 		job->wait_threshold = 0;
 		
 		return group->_count;
@@ -485,7 +507,7 @@ unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
 }
 
 void tina_job_yield(tina_job* job){
-	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	tina_yield(job->fiber, (void*)_TINA_STATUS_YIELDING);
 }
 
 unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
@@ -493,7 +515,7 @@ unsigned tina_job_switch_queue(tina_job* job, unsigned queue_idx){
 	if(queue_idx == old_queue) return queue_idx;
 	
 	job->desc.queue_idx = queue_idx;
-	tina_yield(job->fiber, _TINA_STATUS_YIELDING);
+	tina_yield(job->fiber, (void*)_TINA_STATUS_YIELDING);
 	return old_queue;
 }
 

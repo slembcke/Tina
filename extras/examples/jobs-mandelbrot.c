@@ -301,7 +301,7 @@ static void generate_tile_job(tina_job* job){
 	// Break them into batches of SAMPLE_BATCH_COUNT size, and create tasks to render them.
 	unsigned batch_cursor = 0;
 	while(batch_cursor < 256){
-		tina_scheduler_enqueue(SCHED, "RenderSamples", render_samples_job, &render_context, batch_cursor, queue, &group);
+		tina_scheduler_enqueue(SCHED, render_samples_job, &render_context, batch_cursor, queue, &group);
 		batch_cursor++;
 	}
 	

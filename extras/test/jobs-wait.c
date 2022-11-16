@@ -50,7 +50,7 @@ static void test_wait_countdown_sync(tina_job* job){
 	
 	// Run sub-jobs on the main queue so we can yield them 2 at a time.
 	for(unsigned i = 0; i < counter; i++){
-		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_sync, &counter, i, QUEUE_MAIN, &group);
+		tina_scheduler_enqueue(SCHED, wait_countdown_sync, &counter, i, QUEUE_MAIN, &group);
 	}
 	
 	while(counter){
@@ -71,7 +71,7 @@ static void test_wait_countdown_async(tina_job* job){
 	tina_group group = {0};
 	
 	for(unsigned i = 0; i < counter; i++){
-		tina_scheduler_enqueue(SCHED, NULL, wait_countdown_async, &counter, i, QUEUE_WORK, &group);
+		tina_scheduler_enqueue(SCHED, wait_countdown_async, &counter, i, QUEUE_WORK, &group);
 	}
 	
 	while(counter){
@@ -102,7 +102,7 @@ static void test_wait_multiple(tina_job* job){
 	
 	tina_group_increment(SCHED, &ctx.sync, 16, 0);
 	for(unsigned i = 0; i < 32; i++){
-		tina_scheduler_enqueue(SCHED, NULL, wait_multi, &ctx, i, QUEUE_MAIN, NULL);
+		tina_scheduler_enqueue(SCHED, wait_multi, &ctx, i, QUEUE_MAIN, NULL);
 	}
 	
 	unsigned expected_bits = 0;
@@ -130,7 +130,7 @@ int main(int argc, const char *argv[]){
 	SCHED = tina_scheduler_new(1024, _QUEUE_COUNT, 65, 64*1024);
 	common_start_worker_threads(1, SCHED, QUEUE_WORK);
 	
-	tina_scheduler_enqueue(SCHED, NULL, run_tests, NULL, 0, QUEUE_MAIN, NULL);
+	tina_scheduler_enqueue(SCHED, run_tests, NULL, 0, QUEUE_MAIN, NULL);
 	tina_scheduler_run(SCHED, QUEUE_MAIN, TINA_RUN_LOOP);
 	
 	tina_scheduler_interrupt(SCHED, QUEUE_WORK);

@@ -79,7 +79,7 @@ int main(int argc, const char *argv[]){
 	
 	// Seed the first 16 tasks into the system.
 	for(unsigned i = 0; i < 16; i++){
-		tina_scheduler_enqueue(SCHED, NULL, task_more_tasks, NULL, 0, 0, NULL);
+		tina_scheduler_enqueue(SCHED, task_more_tasks, NULL, 0, 0, NULL);
 	}
 	
 	puts("waiting");

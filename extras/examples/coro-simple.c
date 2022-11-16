@@ -28,7 +28,7 @@
 
 #include "tina.h"
 
-static uintptr_t coro_body(tina* coro, uintptr_t value);
+static void* coro_body(tina* coro, void* value);
 
 int main(int argc, const char *argv[]){
 	size_t buffer_size = 256*1024;
@@ -55,13 +55,14 @@ int main(int argc, const char *argv[]){
 	coro->name = "MyCoro";
 	
 	// Call tina_resume() to switch to the coroutine.
-	// The body function will now start, and '123' will be passed as the 'value' arg.
-	uintptr_t value = tina_resume(coro, 123);
+	// The body function will now start.
+	// The value you send is passed as the 'value' arg to the body function.
+	void* value = tina_resume(coro, "hello");
 	
 	// Now each time you call tina_resume() afterwards it will continue executing from the most recent tina_yield().
 	// The value returned by tina_resume() will be the value passed to the matching tina_yield(), and vice-versa.
 	// When the body function returns, that value will also be returned from tina_resume() and 'tina.complete' will become true.
-	while(!coro->completed) tina_resume(coro, 321);
+	while(!coro->completed) tina_resume(coro, NULL);
 	
 	// The coroutine body function has returned. So attempting to resume it again will fail.
 	printf("The coroutine has finished. Calling it again will crash, like this!\n");
@@ -73,7 +74,7 @@ int main(int argc, const char *argv[]){
 
 // The body function is pretty straightforward.
 // It get's passed the coroutine and the first value passed to tina_resume().
-static uintptr_t coro_body(tina* coro, uintptr_t value){
+static void* coro_body(tina* coro, void* value){
 	printf("coro_body() enter\n");
 	printf("user_data: '%s'\n", (char*)coro->user_data);
 	
