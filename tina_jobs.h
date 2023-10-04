@@ -241,9 +241,11 @@ static tina_scheduler* _tina_scheduler_init2(void* buffer, unsigned job_count, u
 	cursor += _tina_jobs_align(sizeof(tina_scheduler));
 	sched->_queues = (_tina_queue*)cursor;
 	cursor += _tina_jobs_align(queue_count*sizeof(_tina_queue));
-	sched->_fibers = (_tina_stack){.arr = (void**)cursor, .count = 0};
+	_tina_stack fibers = {.arr = (void**)cursor, .count = 0};
+	sched->_fibers = fibers;
 	cursor += _tina_jobs_align(fiber_count*sizeof(void*));
-	sched->_job_pool = (_tina_stack){.arr = (void**)cursor, .count = 0};
+	_tina_stack job_pool = {.arr = (void**)cursor, .count = 0};
+	sched->_job_pool = job_pool;
 	cursor += _tina_jobs_align(job_count*sizeof(void*));
 	
 	// Initialize the queues arrays.
@@ -453,7 +455,8 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .user_data = NULL, .fiber = NULL, .group = group, .wait_next = NULL, .wait_threshold = 0};
+			tina_job job_value = {.desc = list[i], .user_data = NULL, .fiber = NULL, .group = group, .wait_next = NULL, .wait_threshold = 0};
+			(*job) = job_value;
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
@@ -471,7 +474,8 @@ void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* 
 	
 	for(unsigned i = 0; i < count; i++){
 		// Push description
-		desc[cursor++] = (tina_job_description){.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
+		tina_job_description description = {.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
+		desc[cursor++] = description;
 		
 		// Check if the buffer is full.
 		if(cursor == 256){

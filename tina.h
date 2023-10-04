@@ -144,20 +144,21 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	*(uint32_t*)stack_end = TINA_EMPTY._canary;
 	
 	tina* coro = (tina*)aligned;
-	(*coro) = (tina){
+	tina coro_value = {
 		.body = body, .user_data = user_data, .name = "<no name>",
 		.buffer = buffer, .size = size, .completed = false,
 		._caller = NULL, ._stack_pointer = NULL,
 		._canary_end = (uint32_t*)stack_end,
 		._canary = TINA_EMPTY._canary,
 	};
+	(*coro) = coro_value;
 	
 	// Empty coroutine for the init function to use for a return location.
 	tina dummy = TINA_EMPTY;
 	coro->_caller = &dummy;
 
 	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
+	return ((init_func*)(void*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
 }
 
 void _tina_context(tina* coro); // Can this be static and still referenced by the inline asm?! 
@@ -182,7 +183,7 @@ void* tina_swap(tina* from, tina* to, void* value){
 	_TINA_ASSERT(from->_canary == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack overflow.");
 	_TINA_ASSERT(*from->_canary_end == TINA_EMPTY._canary, "Tina Error: Bad canary value. Coroutine has likely had a stack underflow.");
 	typedef void* swap(void** sp_from, void** sp_to, void* value);
-	return ((swap*)_tina_swap)(&from->_stack_pointer, &to->_stack_pointer, value);
+	return ((swap*)(void*)_tina_swap)(&from->_stack_pointer, &to->_stack_pointer, value);
 }
 
 void* tina_resume(tina* coro, void* value){
