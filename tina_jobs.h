@@ -146,7 +146,6 @@ static inline void tina_scheduler_enqueue(tina_scheduler* sched, tina_job_func* 
 
 struct tina_job {
 	tina_job_description desc;
-	void* user_data;
 	tina* fiber;
 	tina_group* group;
 	tina_job* wait_next;
@@ -453,7 +452,7 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 			
 			// Pop a job from the pool.
 			tina_job* job = (tina_job*)sched->_job_pool.arr[--sched->_job_pool.count];
-			(*job) = (tina_job){.desc = list[i], .user_data = NULL, .fiber = NULL, .group = group, .wait_next = NULL, .wait_threshold = 0};
+			(*job) = (tina_job){.desc = list[i], .fiber = NULL, .group = group, .wait_next = NULL, .wait_threshold = 0};
 			
 			// Push it to the proper queue.
 			_tina_queue* queue = _tina_get_queue(sched, list[i].queue_idx);
@@ -465,23 +464,44 @@ unsigned tina_scheduler_enqueue_batch(tina_scheduler* sched, const tina_job_desc
 	return count;
 }
 
-void tina_scheduler_enqueue_n(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned queue_idx, tina_group* group){
-	unsigned cursor = 0;
-	tina_job_description desc[256];
+typedef struct {
+	unsigned count, size;
+	tina_job_func* func;
+	void* user_data;
+} _tina_batch_context;
+
+static void _tina_batch_job(tina_job* job){
+	tina_job_description* desc = &job->desc;
+	_tina_batch_context* batch = desc->user_data;
+	unsigned idx_max = desc->user_idx + batch->size;
+	if(idx_max > batch->count) idx_max = batch->count;
 	
-	for(unsigned i = 0; i < count; i++){
-		// Push description
-		desc[cursor++] = (tina_job_description){.name = NULL, .func = func, .user_data = user_data, .user_idx = i, .queue_idx = queue_idx};
-		
-		// Check if the buffer is full.
-		if(cursor == 256){
-			tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
-			cursor = 0;
-		};
+	desc->user_data = batch->user_data;
+	while(desc->user_idx < idx_max){
+		batch->func(job);
+		desc->user_idx++;
+	}
+}
+
+#define _TINA_BATCH_CHUNK_SIZE 32
+
+void tina_scheduler_enqueue_n2(tina_scheduler* sched, tina_job_func* func, void* user_data, unsigned count, unsigned batch_size, unsigned queue_idx, tina_group* group){
+	tina_job_description desc[_TINA_BATCH_CHUNK_SIZE];
+	unsigned cursor = 0;
+	
+	_tina_batch_context ctx = {.func = func, .count = count, .size = batch_size, .user_data = user_data};
+	for(unsigned i = 0; i < count; i += batch_size){
+		desc[cursor++ % _TINA_BATCH_CHUNK_SIZE] = (tina_job_description){.name = NULL, .func = _tina_batch_job, .user_data = &ctx, .user_idx = i, .queue_idx = queue_idx};
+		if(cursor % _TINA_BATCH_CHUNK_SIZE == 0) tina_scheduler_enqueue_batch(sched, desc, _TINA_BATCH_CHUNK_SIZE, group, 0);
 	}
 	
-	// Queue the remainder.
-	if(cursor) tina_scheduler_enqueue_batch(sched, desc, cursor, group, 0);
+	if(cursor % _TINA_BATCH_CHUNK_SIZE) tina_scheduler_enqueue_batch(sched, desc, cursor % _TINA_BATCH_CHUNK_SIZE, group, 0);
+}
+
+void tina_job_join(tina_job* job, tina_job_func* func, void* user_data, unsigned count, unsigned batch_size, unsigned queue_idx){
+	tina_group group = {};
+	tina_scheduler_enqueue_n2(tina_job_get_scheduler(job), func, user_data, count, batch_size, queue_idx, &group);
+	tina_job_wait(job, &group, 0);
 }
 
 unsigned tina_job_wait(tina_job* job, tina_group* group, unsigned threshold){
