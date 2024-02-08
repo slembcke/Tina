@@ -19,6 +19,13 @@
 		GetSystemInfo(&sysinfo);
 		return sysinfo.dwNumberOfProcessors;
 	}
+#elif defined(__HAIKU__)
+	#include <kernel/OS.h>
+	static unsigned common_get_cpu_count(void){
+		system_info info;
+		get_system_info(&info);
+		return info.cpu_count;
+	}
 #else
 	#error TODO Unhandled/unknown system type.
 #endif

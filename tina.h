@@ -246,7 +246,7 @@ void* tina_yield(tina* coro, void* value){
 	// And perform a normal return instruction.
 	// This will return from tina_yield() in the new coroutine.
 	asm("  bx lr");
-#elif __amd64__ && (__unix__ || __APPLE__)
+#elif __amd64__ && (__unix__ || __APPLE__ || __HAIKU__)
 	#define ARG0 "rdi"
 	#define ARG1 "rsi"
 	#define ARG2 "rdx"
