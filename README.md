@@ -9,9 +9,9 @@ Coroutines are little lightweight userspace threading primitives, and they are s
 * Bring your own memory (or let Tina `malloc()` for you)
 * Fast assembly language implementations
 * Cross platform, supporting several of the most common modern ABIs
-	* System V for amd64: Mac, Linux, BSD, etc (and probably PS4)
-	* Win64: Windows (and probably Xbox)
-	* ARM aarch32 and aarch64: Unixes (and probably Mac / iOS / Android / Switch)
+	* System V for amd64: Mac, Linux, BSD, Haiku, etc (and probably PS4/PS5 but not tested)
+	* Win64: Windows (and probably Xbox but not tested)
+	* ARM aarch32 and aarch64: Mac, Linux, etc (and probably iOS / Android / Switch but not tested)
 * Supports GCC / Clang using inline assembly, and MSVC using embedded machine code
 * Minimal assembly footprint required to support a new ABI (armv7 is like a dozen instructions)
 * Minimal code footprint. Currently ~200 sloc
