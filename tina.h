@@ -200,7 +200,7 @@ void* tina_yield(tina* coro, void* value){
 	return tina_swap(coro, caller, value);
 }
 
-#if __APPLE__
+#if __APPLE__ || __WIN32__
 	#define _TINA_SYMBOL(sym) "_"#sym
 #else
 	#define _TINA_SYMBOL(sym) #sym
@@ -285,6 +285,41 @@ void* tina_yield(tina* coro, void* value){
 	asm("  pop rbx");
 	asm("  pop rbp");
 	asm("  mov " RET ", " ARG2);
+	asm("  ret");
+	
+	asm(".att_syntax");
+#elif __GNUC__ && __i386__
+	asm(".intel_syntax noprefix");
+	
+	asm(_TINA_SYMBOL(_tina_init_stack:));
+	asm("  mov eax, [esp + 0x04]"); // coro
+	asm("  mov ecx, [esp + 0x0C]"); // sp_loc
+	asm("  mov edx, [esp + 0x10]"); // sp
+	asm("  push ebp");
+	asm("  push ebx");
+	asm("  push esi");
+	asm("  push edi");
+	asm("  mov [ecx], esp");
+	asm("  and edx, ~0xF");
+	asm("  mov esp, edx");
+	asm("  push eax"); // push argument
+	asm("  push 0"); // push empty retaddr
+	asm("  jmp " _TINA_SYMBOL(_tina_context));
+
+	asm(_TINA_SYMBOL(_tina_swap:));
+	asm("  mov eax, [esp + 0x0C]"); // retval
+	asm("  mov ecx, [esp + 0x04]"); // sp_from
+	asm("  mov edx, [esp + 0x08]"); // sp_to
+	asm("  push ebp");
+	asm("  push ebx");
+	asm("  push esi");
+	asm("  push edi");
+	asm("  mov [ecx], esp");
+	asm("  mov esp, [edx]");
+	asm("  pop edi");
+	asm("  pop esi");
+	asm("  pop ebx");
+	asm("  pop ebp");
 	asm("  ret");
 	
 	asm(".att_syntax");
@@ -383,6 +418,8 @@ void* tina_yield(tina* coro, void* value){
 	asm("  add sp, sp, 0xA0");
 	asm("  mov x0, x2");
 	asm("  ret");
+#else
+	#error Unhandled target CPU/ABI/Compiler combination!}
 #endif
 
 #endif // TINA_IMPLEMENTATION

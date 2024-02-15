@@ -4,6 +4,7 @@ CFLAGS += -O3 -ffast-math
 CXXFLAGS = $(CFLAGS) -Wno-missing-field-initializers
 
 # Linux
+# CFLAGS += -m32 # Test i386 builds
 LDFLAGS = -pthread -g
 LDLIBS = -lm -lGL -lX11 -ldl
 
