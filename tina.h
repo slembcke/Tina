@@ -164,7 +164,9 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 void _tina_context(tina* coro); // Can this be static and still referenced by the inline asm?! 
 void _tina_context(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
+		puts("pre-yield");
 	void* value = tina_yield(coro, coro);
+		puts("post-yield");
 	// Call the body function with the first value.
 	value = coro->body(coro, value);
 	// body() has exited, and the coroutine is completed.
@@ -323,6 +325,100 @@ void* tina_yield(tina* coro, void* value){
 	asm("  ret");
 	
 	asm(".att_syntax");
+#elif __riscv && __riscv_xlen == 64 && __riscv_flen == 64
+	// 64bit riscv w/ 64 bit floats
+	// push s0-s11, fs0-fs11
+	asm("_tina_init_stack:");
+  asm("  addi sp, sp, -0xD0");
+	asm("  sd  sp, (a2)");
+	asm("  sd  ra,   0xC8(sp)");
+	asm("  sd  s0,   0xC0(sp)");
+	asm("  sd  s1,   0xB8(sp)");
+	asm("  sd  s2,   0xB0(sp)");
+	asm("  sd  s3,   0xA8(sp)");
+	asm("  sd  s4,   0xA0(sp)");
+	asm("  sd  s5,   0x98(sp)");
+	asm("  sd  s6,   0x90(sp)");
+	asm("  sd  s7,   0x88(sp)");
+	asm("  sd  s8,   0x80(sp)");
+	asm("  sd  s9,   0x78(sp)");
+	asm("  sd  s10,  0x70(sp)");
+	asm("  sd  s11,  0x68(sp)");
+	asm("  fsd fs0,  0x60(sp)");
+	asm("  fsd fs1,  0x58(sp)");
+	asm("  fsd fs2,  0x50(sp)");
+	asm("  fsd fs3,  0x48(sp)");
+	asm("  fsd fs4,  0x40(sp)");
+	asm("  fsd fs5,  0x38(sp)");
+	asm("  fsd fs6,  0x30(sp)");
+	asm("  fsd fs7,  0x28(sp)");
+	asm("  fsd fs8,  0x20(sp)");
+	asm("  fsd fs9,  0x18(sp)");
+	asm("  fsd fs10, 0x10(sp)");
+	asm("  fsd fs11, 0x08(sp)");
+	asm("  andi a3, a3, ~0xF");
+	asm("  mv a3, sp");
+	asm("  mv x0, ra");
+	asm("  tail _tina_context");
+	
+	asm("_tina_swap:");
+  asm("  addi sp, sp, -0xD0");
+	asm("  sd sp, (a0)");
+	asm("  sd  ra,   0xC8(sp)");
+	asm("  sd  s0,   0xC0(sp)");
+	asm("  sd  s1,   0xB8(sp)");
+	asm("  sd  s2,   0xB0(sp)");
+	asm("  sd  s3,   0xA8(sp)");
+	asm("  sd  s4,   0xA0(sp)");
+	asm("  sd  s5,   0x98(sp)");
+	asm("  sd  s6,   0x90(sp)");
+	asm("  sd  s7,   0x88(sp)");
+	asm("  sd  s8,   0x80(sp)");
+	asm("  sd  s9,   0x78(sp)");
+	asm("  sd  s10,  0x70(sp)");
+	asm("  sd  s11,  0x68(sp)");
+	asm("  fsd fs0,  0x60(sp)");
+	asm("  fsd fs1,  0x58(sp)");
+	asm("  fsd fs2,  0x50(sp)");
+	asm("  fsd fs3,  0x48(sp)");
+	asm("  fsd fs4,  0x40(sp)");
+	asm("  fsd fs5,  0x38(sp)");
+	asm("  fsd fs6,  0x30(sp)");
+	asm("  fsd fs7,  0x28(sp)");
+	asm("  fsd fs8,  0x20(sp)");
+	asm("  fsd fs9,  0x18(sp)");
+	asm("  fsd fs10, 0x10(sp)");
+	asm("  fsd fs11, 0x08(sp)");
+
+	asm("  ld sp, (a1)");
+	asm("  ld  ra,   0xC8(sp)");
+	asm("  ld  s0,   0xC0(sp)");
+	asm("  ld  s1,   0xB8(sp)");
+	asm("  ld  s2,   0xB0(sp)");
+	asm("  ld  s3,   0xA8(sp)");
+	asm("  ld  s4,   0xA0(sp)");
+	asm("  ld  s5,   0x98(sp)");
+	asm("  ld  s6,   0x90(sp)");
+	asm("  ld  s7,   0x88(sp)");
+	asm("  ld  s8,   0x80(sp)");
+	asm("  ld  s9,   0x78(sp)");
+	asm("  ld  s10,  0x70(sp)");
+	asm("  ld  s11,  0x68(sp)");
+	asm("  fld fs0,  0x60(sp)");
+	asm("  fld fs1,  0x58(sp)");
+	asm("  fld fs2,  0x50(sp)");
+	asm("  fld fs3,  0x48(sp)");
+	asm("  fld fs4,  0x40(sp)");
+	asm("  fld fs5,  0x38(sp)");
+	asm("  fld fs6,  0x30(sp)");
+	asm("  fld fs7,  0x28(sp)");
+	asm("  fld fs8,  0x20(sp)");
+	asm("  fld fs9,  0x18(sp)");
+	asm("  fld fs10, 0x10(sp)");
+	asm("  fld fs11, 0x08(sp)");
+	asm("  addi sp, sp, 0xD0");
+	asm("  mv a2, a0");
+	asm("  ret");
 #elif __WIN64__ || _WIN64
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
