@@ -288,77 +288,45 @@ void* tina_yield(tina* coro, void* value){
 	asm("  ret");
 	
 	asm(".att_syntax");
-#elif __GNUC__ && __i386__
-	#define foo(...) asm(#__VA_ARGS__)
+#elif (__GNUC__ && __i386__) || (_WIN32)
+	// #define foo(...) __asm __VA_ARGS__
+	// __declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp){
 	asm(".intel_syntax noprefix");
-	
+	#define TINA_I386ASM(...) asm(#__VA_ARGS__)
 	asm(_TINA_SYMBOL(_tina_init_stack:));
-	foo(  mov eax, [esp + 0x04]); // coro
-	// asm("  mov eax , [esp + 0x04]"); // coro
-	asm("  mov ecx, [esp + 0x0C]"); // sp_loc
-	asm("  mov edx, [esp + 0x10]"); // sp
-	foo(  push ebp);
-	asm("  push ebx");
-	asm("  push esi");
-	asm("  push edi");
-	asm("  mov [ecx], esp");
-	asm("  and edx, ~0xF");
-	asm("  mov esp, edx");
-	asm("  push eax"); // push argument
-	asm("  push 0"); // push empty retaddr
-	asm("  jmp " _TINA_SYMBOL(_tina_context));
+		TINA_I386ASM(mov eax, [esp + 0x04]); // coro
+		TINA_I386ASM(mov ecx, [esp + 0x0C]); // sp_loc
+		TINA_I386ASM(mov edx, [esp + 0x10]); // sp
+		TINA_I386ASM(push ebp);
+		TINA_I386ASM(push ebx);
+		TINA_I386ASM(push esi);
+		TINA_I386ASM(push edi);
+		TINA_I386ASM(mov [ecx], esp);
+		TINA_I386ASM(and edx, ~0xF);
+		TINA_I386ASM(mov esp, edx);
+		TINA_I386ASM(push eax); // push argument
+		TINA_I386ASM(push 0); // push empty retaddr
+		TINA_I386ASM(jmp _tina_context);
+	// }
 
+	// __declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value){
 	asm(_TINA_SYMBOL(_tina_swap:));
-	asm("  mov eax, [esp + 0x0C]"); // retval
-	asm("  mov ecx, [esp + 0x04]"); // sp_from
-	asm("  mov edx, [esp + 0x08]"); // sp_to
-	asm("  push ebp");
-	asm("  push ebx");
-	asm("  push esi");
-	asm("  push edi");
-	asm("  mov [ecx], esp");
-	asm("  mov esp, [edx]");
-	asm("  pop edi");
-	asm("  pop esi");
-	asm("  pop ebx");
-	asm("  pop ebp");
-	asm("  ret");
-	
+		TINA_I386ASM(mov eax, [esp + 0x0C]); // retval
+		TINA_I386ASM(mov ecx, [esp + 0x04]); // sp_from
+		TINA_I386ASM(mov edx, [esp + 0x08]); // sp_to
+		TINA_I386ASM(push ebp);
+		TINA_I386ASM(push ebx);
+		TINA_I386ASM(push esi);
+		TINA_I386ASM(push edi);
+		TINA_I386ASM(mov [ecx], esp);
+		TINA_I386ASM(mov esp, [edx]);
+		TINA_I386ASM(pop edi);
+		TINA_I386ASM(pop esi);
+		TINA_I386ASM(pop ebx);
+		TINA_I386ASM(pop ebp);
+		TINA_I386ASM(ret);
+	// }
 	asm(".att_syntax");
-#elif _WIN32
-#define foo(...) __asm __VA_ARGS__
-	__declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp){
-		foo(mov eax, [esp + 0x04]); // coro
-		foo(mov ecx, [esp + 0x0C]); // sp_loc
-		foo(mov edx, [esp + 0x10]); // sp
-		foo(push ebp);
-		foo(push ebx);
-		foo(push esi);
-		foo(push edi);
-		foo(mov[ecx], esp);
-		foo(and edx, ~0xF);
-		foo(mov esp, edx);
-		foo(push eax); // push argument
-		foo({push 0}); // push empty retaddr
-		foo(jmp _tina_context);
-	}
-
-	__declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value){
-		foo(mov eax, [esp + 0x0C]); // retval
-		foo(mov ecx, [esp + 0x04]); // sp_from
-		foo(mov edx, [esp + 0x08]); // sp_to
-		foo(push ebp);
-		foo(push ebx);
-		foo(push esi);
-		foo(push edi);
-		foo(mov [ecx], esp);
-		foo(mov esp, [edx]);
-		foo(pop edi);
-		foo(pop esi);
-		foo(pop ebx);
-		foo(pop ebp);
-		foo(ret);
-	}
 #elif __WIN64__ || _WIN64
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
