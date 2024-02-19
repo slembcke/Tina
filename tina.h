@@ -289,13 +289,15 @@ void* tina_yield(tina* coro, void* value){
 	
 	asm(".att_syntax");
 #elif __GNUC__ && __i386__
+	#define foo(...) asm(#__VA_ARGS__)
 	asm(".intel_syntax noprefix");
 	
 	asm(_TINA_SYMBOL(_tina_init_stack:));
-	asm("  mov eax, [esp + 0x04]"); // coro
+	foo(  mov eax, [esp + 0x04]); // coro
+	// asm("  mov eax , [esp + 0x04]"); // coro
 	asm("  mov ecx, [esp + 0x0C]"); // sp_loc
 	asm("  mov edx, [esp + 0x10]"); // sp
-	asm("  push ebp");
+	foo(  push ebp);
 	asm("  push ebx");
 	asm("  push esi");
 	asm("  push edi");
