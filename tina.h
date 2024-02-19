@@ -323,6 +323,40 @@ void* tina_yield(tina* coro, void* value){
 	asm("  ret");
 	
 	asm(".att_syntax");
+#elif _WIN32
+#define foo(...) __asm __VA_ARGS__
+	__declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp){
+		foo(mov eax, [esp + 0x04]); // coro
+		foo(mov ecx, [esp + 0x0C]); // sp_loc
+		foo(mov edx, [esp + 0x10]); // sp
+		foo(push ebp);
+		foo(push ebx);
+		foo(push esi);
+		foo(push edi);
+		foo(mov[ecx], esp);
+		foo(and edx, ~0xF);
+		foo(mov esp, edx);
+		foo(push eax); // push argument
+		foo({push 0}); // push empty retaddr
+		foo(jmp _tina_context);
+	}
+
+	__declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value){
+		foo(mov eax, [esp + 0x0C]); // retval
+		foo(mov ecx, [esp + 0x04]); // sp_from
+		foo(mov edx, [esp + 0x08]); // sp_to
+		foo(push ebp);
+		foo(push ebx);
+		foo(push esi);
+		foo(push edi);
+		foo(mov [ecx], esp);
+		foo(mov esp, [edx]);
+		foo(pop edi);
+		foo(pop esi);
+		foo(pop ebx);
+		foo(pop ebp);
+		foo(ret);
+	}
 #elif __WIN64__ || _WIN64
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
 	
