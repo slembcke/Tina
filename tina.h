@@ -97,7 +97,7 @@ void* tina_swap(tina* from, tina* to, void* value);
 #define TINA_ABI_aarch32 (__ARM_EABI__ && __GNUC__)
 #define TINA_ABI_aarch64 (__aarch64__ && __GNUC__)
 #define TINA_ABI_i386 ((__i386__ && __GNUC__) || (_M_IX86 && _MSC_VER))
-#define TINA_ABI_SysV_AMD64 (__amd64__ && __GNUC__)
+#define TINA_ABI_SysV_AMD64 (__amd64__ && __GNUC__ && (__unix__ || __APPLE__ || __HAIKU__))
 #define TINA_ABI_WIN64 ((__WIN64__ && __GNUC__) || (_M_AMD64 && _MSC_VER))
 
 #ifndef TINA_NO_CRT
