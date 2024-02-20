@@ -133,7 +133,7 @@ const tina TINA_EMPTY = {
 #else
 	// Avoid the MSVC hack unless necessary!
 	extern void* _tina_swap(void** sp_from, void** sp_to, void* value);
-	extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+	extern tina* _tina_init_stack(tina* coro, void** sp_from, void* sp_to);
 #endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
@@ -163,8 +163,8 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina dummy = TINA_EMPTY;
 	coro->_caller = &dummy;
 
-	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)(void*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
+	typedef tina* init_func(tina* coro, void** sp_loc, void* sp);
+	return ((init_func*)(void*)_tina_init_stack)(coro, &dummy._stack_pointer, stack_end);
 }
 
 // Must declare as non-static to make it visible to the asm below.
@@ -228,10 +228,10 @@ void* tina_yield(tina* coro, void* value){
 	asm("  vpush {q4-q7}");
 	// Now store the stack pointer in the couroutine.
 	// _tina_start() will call tina_yield() to restore the stack and registers later.
-	asm("  str sp, [r2]");
+	asm("  str sp, [r1]");
 	// Align the stack top to 16 bytes as requested by the ABI and set it to the stack pointer.
-	asm("  and r3, r3, #~0xF");
-	asm("  mov sp, r3");
+	asm("  and r2, r2, #-16");
+	asm("  mov sp, r2");
 	// Finally, tail call into _tina_start().
 	// By setting the caller to null, debuggers will show _tina_start() as a base stack frame.
 	asm("  mov lr, #0");
@@ -267,10 +267,10 @@ void* tina_yield(tina* coro, void* value){
 	asm("  stp d10, d11, [sp, 0x70]");
 	asm("  stp d12, d13, [sp, 0x80]");
 	asm("  stp d14, d15, [sp, 0x90]");
-	asm("  mov x4, sp");
-	asm("  str x4, [x2]");
-	asm("  and x3, x3, #~0xF");
-	asm("  mov sp, x3");
+	asm("  mov x3, sp");
+	asm("  str x3, [x1]");
+	asm("  and x2, x2, #-16");
+	asm("  mov sp, x2");
 	asm("  mov lr, #0");
 	asm("  b " _TINA_SYMBOL(_tina_start));
 
@@ -315,14 +315,14 @@ void* tina_yield(tina* coro, void* value){
 		#error Unknown/untested compiler for i386. 
 	#endif
 		TINA_I386ASM(mov eax, [esp + 0x04]); // coro
-		TINA_I386ASM(mov ecx, [esp + 0x0C]); // sp_loc
-		TINA_I386ASM(mov edx, [esp + 0x10]); // sp
+		TINA_I386ASM(mov ecx, [esp + 0x08]); // sp_loc
+		TINA_I386ASM(mov edx, [esp + 0x0c]); // sp
 		TINA_I386ASM(push ebp);
 		TINA_I386ASM(push ebx);
 		TINA_I386ASM(push esi);
 		TINA_I386ASM(push edi);
 		TINA_I386ASM(mov [ecx], esp);
-		TINA_I386ASM(and edx, ~0xF);
+		TINA_I386ASM(and edx, -16);
 		TINA_I386ASM(mov esp, edx);
 		TINA_I386ASM(push eax); // push argument
 		TINA_I386ASM(push 0); // push empty retaddr
@@ -357,12 +357,6 @@ void* tina_yield(tina* coro, void* value){
 		}
 	#endif
 #elif TINA_ABI_SysV_AMD64
-	#define ARG0 "rdi"
-	#define ARG1 "rsi"
-	#define ARG2 "rdx"
-	#define ARG3 "rcx"
-	#define RET "rax"
-	
 	asm(".intel_syntax noprefix");
 	
 	asm(_TINA_SYMBOL(_tina_init_stack:));
@@ -372,9 +366,9 @@ void* tina_yield(tina* coro, void* value){
 	asm("  push r13");
 	asm("  push r14");
 	asm("  push r15");
-	asm("  mov [" ARG2 "], rsp");
-	asm("  and " ARG3 ", ~0xF");
-	asm("  mov rsp, " ARG3);
+	asm("  mov [rsi], rsp"); // rsi = arg1
+	asm("  and rdx, -16"); // rdx = arg2
+	asm("  mov rsp, rdx");
 	asm("  push 0");
 	asm("  jmp " _TINA_SYMBOL(_tina_start));
 	
@@ -386,15 +380,15 @@ void* tina_yield(tina* coro, void* value){
 	asm("  push r13");
 	asm("  push r14");
 	asm("  push r15");
-	asm("  mov [" ARG0 "], rsp");
-	asm("  mov rsp, [" ARG1 "]");
+	asm("  mov [rdi], rsp"); // rdri = arg0
+	asm("  mov rsp, [rsi]"); // rsi = arg1
 	asm("  pop r15");
 	asm("  pop r14");
 	asm("  pop r13");
 	asm("  pop r12");
 	asm("  pop rbx");
 	asm("  pop rbp");
-	asm("  mov " RET ", " ARG2);
+	asm("  mov rax, rdx"); // rax = ret, rdx = arg2
 	asm("  ret");
 	
 	asm(".att_syntax");
@@ -419,8 +413,8 @@ void* tina_yield(tina* coro, void* value){
 		0x8024bc290f000000, 0x2444290f44000000,
 		0x4460244c290f4470, 0x290f44502454290f,
 		0x2464290f4440245c, 0x4420246c290f4430,
-		0x290f44102474290f, 0xe18349208949243c,
-		0x0c894865cc894cf0, 0x8948650000147825,
+		0x290f44102474290f, 0xe08349228948243c,
+		0x0c894865c4894cf0, 0x8948650000147825,
 		0x4c6500000010250c, 0x6a00000008250c89,
 		0xb8489020ec834800, (uint64_t)_tina_start,
 		0x909090909090e0ff, 0x9090909090909090,
