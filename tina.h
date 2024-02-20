@@ -94,6 +94,12 @@ void* tina_swap(tina* from, tina* to, void* value);
 
 #ifdef TINA_IMPLEMENTATION
 
+#define TINA_ABI_aarch32 (__ARM_EABI__ && __GNUC__)
+#define TINA_ABI_aarch64 (__aarch64__ && __GNUC__)
+#define TINA_ABI_i386 ((__i386__ && __GNUC__) || (_M_IX86 && _MSC_VER))
+#define TINA_ABI_SysV_AMD64 (__amd64__ && __GNUC__ && (__unix__ || __APPLE__ || __HAIKU__))
+#define TINA_ABI_WIN64 ((__WIN64__ && __GNUC__) || (_M_AMD64 && _MSC_VER))
+
 #ifndef TINA_NO_CRT
 	#include <stdlib.h>
 	#ifndef _TINA_ASSERT
@@ -127,7 +133,7 @@ const tina TINA_EMPTY = {
 #else
 	// Avoid the MSVC hack unless necessary!
 	extern void* _tina_swap(void** sp_from, void** sp_to, void* value);
-	extern tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp);
+	extern tina* _tina_init_stack(tina* coro, void** sp_from, void* sp_to);
 #endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
@@ -157,12 +163,14 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	tina dummy = TINA_EMPTY;
 	coro->_caller = &dummy;
 
-	typedef tina* init_func(tina* coro, tina_func* body, void** sp_loc, void* sp);
-	return ((init_func*)(void*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
+	typedef tina* init_func(tina* coro, void** sp_loc, void* sp);
+	return ((init_func*)(void*)_tina_init_stack)(coro, &dummy._stack_pointer, stack_end);
 }
 
-void _tina_context(tina* coro); // Can this be static and still referenced by the inline asm?! 
-void _tina_context(tina* coro){
+// Must declare as non-static to make it visible to the asm below.
+void _tina_start(tina* coro);
+
+void _tina_start(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
 	void* value = tina_yield(coro, coro);
 	// Call the body function with the first value.
@@ -188,9 +196,9 @@ void* tina_swap(tina* from, tina* to, void* value){
 
 void* tina_resume(tina* coro, void* value){
 	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
-	tina dummy = TINA_EMPTY;
-	coro->_caller = &dummy;
-	return tina_swap(&dummy, coro, value);
+	tina this_fiber = TINA_EMPTY;
+	coro->_caller = &this_fiber;
+	return tina_swap(&this_fiber, coro, value);
 }
 
 void* tina_yield(tina* coro, void* value){
@@ -200,13 +208,13 @@ void* tina_yield(tina* coro, void* value){
 	return tina_swap(coro, caller, value);
 }
 
-#if __APPLE__
+#if __APPLE__ || __WIN32__
 	#define _TINA_SYMBOL(sym) "_"#sym
 #else
 	#define _TINA_SYMBOL(sym) #sym
 #endif
 
-#if __ARM_EABI__ && __GNUC__
+#if TINA_ABI_aarch32
 	// TODO: Is this an appropriate macro check for a 32 bit ARM ABI?
 	// TODO: Only tested on RPi3.
 	
@@ -219,15 +227,15 @@ void* tina_yield(tina* coro, void* value){
 	asm("  push {r4-r11, lr}");
 	asm("  vpush {q4-q7}");
 	// Now store the stack pointer in the couroutine.
-	// _tina_context() will call tina_yield() to restore the stack and registers later.
-	asm("  str sp, [r2]");
+	// _tina_start() will call tina_yield() to restore the stack and registers later.
+	asm("  str sp, [r1]");
 	// Align the stack top to 16 bytes as requested by the ABI and set it to the stack pointer.
-	asm("  and r3, r3, #~0xF");
-	asm("  mov sp, r3");
-	// Finally, tail call into _tina_context.
-	// By setting the caller to null, debuggers will show _tina_context() as a base stack frame.
+	asm("  and r2, r2, #-16");
+	asm("  mov sp, r2");
+	// Finally, tail call into _tina_start().
+	// By setting the caller to null, debuggers will show _tina_start() as a base stack frame.
 	asm("  mov lr, #0");
-	asm("  b _tina_context");
+	asm("  b _tina_start");
 	
 	// https://static.docs.arm.com/ihi0042/g/aapcs32.pdf
 	// _tina_swap() is responsible for swapping out the registers and stack pointer.
@@ -246,95 +254,7 @@ void* tina_yield(tina* coro, void* value){
 	// And perform a normal return instruction.
 	// This will return from tina_yield() in the new coroutine.
 	asm("  bx lr");
-#elif __amd64__ && (__unix__ || __APPLE__ || __HAIKU__)
-	#define ARG0 "rdi"
-	#define ARG1 "rsi"
-	#define ARG2 "rdx"
-	#define ARG3 "rcx"
-	#define RET "rax"
-	
-	asm(".intel_syntax noprefix");
-	
-	asm(_TINA_SYMBOL(_tina_init_stack:));
-	asm("  push rbp");
-	asm("  push rbx");
-	asm("  push r12");
-	asm("  push r13");
-	asm("  push r14");
-	asm("  push r15");
-	asm("  mov [" ARG2 "], rsp");
-	asm("  and " ARG3 ", ~0xF");
-	asm("  mov rsp, " ARG3);
-	asm("  push 0");
-	asm("  jmp " _TINA_SYMBOL(_tina_context));
-	
-	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
-	asm(_TINA_SYMBOL(_tina_swap:));
-	asm("  push rbp");
-	asm("  push rbx");
-	asm("  push r12");
-	asm("  push r13");
-	asm("  push r14");
-	asm("  push r15");
-	asm("  mov [" ARG0 "], rsp");
-	asm("  mov rsp, [" ARG1 "]");
-	asm("  pop r15");
-	asm("  pop r14");
-	asm("  pop r13");
-	asm("  pop r12");
-	asm("  pop rbx");
-	asm("  pop rbp");
-	asm("  mov " RET ", " ARG2);
-	asm("  ret");
-	
-	asm(".att_syntax");
-#elif __WIN64__ || _WIN64
-	// MSVC doesn't allow inline assembly, assemble to binary blob then.
-	
-	#if __GNUC__
-		#define TINA_SECTION_ATTRIBUTE __attribute__((section(".text#")))
-	#elif _MSC_VER
-		#pragma section(".text")
-		#define TINA_SECTION_ATTRIBUTE __declspec(allocate(".text"))
-	#else
-		#error Unknown/untested compiler for Win64. 
-	#endif
-	
-	// Assembled and dumped from win64-init.S
-	TINA_SECTION_ATTRIBUTE
-	const uint64_t _tina_init_stack[] = {
-		0x5541544157565355, 0x2534ff6557415641,
-		0x2534ff6500000008, 0x2534ff6500000010,
-		0xa0ec814800001478, 0x9024b4290f000000,
-		0x8024bc290f000000, 0x2444290f44000000,
-		0x4460244c290f4470, 0x290f44502454290f,
-		0x2464290f4440245c, 0x4420246c290f4430,
-		0x290f44102474290f, 0xe18349208949243c,
-		0x0c894865cc894cf0, 0x8948650000147825,
-		0x4c6500000010250c, 0x6a00000008250c89,
-		0xb8489020ec834800, (uint64_t)_tina_context,
-		0x909090909090e0ff, 0x9090909090909090,
-	};
-
-	// Assembled and dumped from win64-swap.S
-	TINA_SECTION_ATTRIBUTE
-	const uint64_t _tina_swap[] = {
-		0x5541544157565355, 0x2534ff6557415641,
-		0x2534ff6500000008, 0x2534ff6500000010,
-		0xa0ec814800001478, 0x9024b4290f000000,
-		0x8024bc290f000000, 0x2444290f44000000,
-		0x4460244c290f4470, 0x290f44502454290f,
-		0x2464290f4440245c, 0x4420246c290f4430,
-		0x290f44102474290f, 0x228b48218948243c,
-		0x0000009024b4280f, 0x0000008024bc280f,
-		0x0f44702444280f44, 0x54280f4460244c28,
-		0x40245c280f445024, 0x0f44302464280f44,
-		0x74280f4420246c28, 0x48243c280f441024,
-		0x8f65000000a0c481, 0x8f65000014782504,
-		0x8f65000000102504, 0x5f41000000082504,
-		0x5e5f5c415d415e41, 0x9090c3c0894c5d5b,
-	};
-#elif __aarch64__ && __GNUC__
+#elif TINA_ABI_aarch64
 	asm(_TINA_SYMBOL(_tina_init_stack:));
 	asm("  sub sp, sp, 0xA0");
 	asm("  stp x19, x20, [sp, 0x00]");
@@ -347,12 +267,12 @@ void* tina_yield(tina* coro, void* value){
 	asm("  stp d10, d11, [sp, 0x70]");
 	asm("  stp d12, d13, [sp, 0x80]");
 	asm("  stp d14, d15, [sp, 0x90]");
-	asm("  mov x4, sp");
-	asm("  str x4, [x2]");
-	asm("  and x3, x3, #~0xF");
-	asm("  mov sp, x3");
+	asm("  mov x3, sp");
+	asm("  str x3, [x1]");
+	asm("  and x2, x2, #-16");
+	asm("  mov sp, x2");
 	asm("  mov lr, #0");
-	asm("  b " _TINA_SYMBOL(_tina_context));
+	asm("  b " _TINA_SYMBOL(_tina_start));
 
 	asm(_TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
@@ -383,6 +303,143 @@ void* tina_yield(tina* coro, void* value){
 	asm("  add sp, sp, 0xA0");
 	asm("  mov x0, x2");
 	asm("  ret");
+#elif TINA_ABI_i386
+	#if __GNUC__
+		asm(".intel_syntax noprefix");
+		#define TINA_I386ASM(...) asm(#__VA_ARGS__)
+		asm(_TINA_SYMBOL(_tina_init_stack:));
+	#elif _MSC_VER
+		#define TINA_I386ASM(...) __asm __VA_ARGS__
+		__declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp){
+	#else
+		#error Unknown/untested compiler for i386. 
+	#endif
+		TINA_I386ASM(mov eax, [esp + 0x04]); // coro
+		TINA_I386ASM(mov ecx, [esp + 0x08]); // sp_loc
+		TINA_I386ASM(mov edx, [esp + 0x0c]); // sp
+		TINA_I386ASM(push ebp);
+		TINA_I386ASM(push ebx);
+		TINA_I386ASM(push esi);
+		TINA_I386ASM(push edi);
+		TINA_I386ASM(mov [ecx], esp);
+		TINA_I386ASM(and edx, -16);
+		TINA_I386ASM(mov esp, edx);
+		TINA_I386ASM(push eax); // push argument
+		TINA_I386ASM(push 0); // push empty retaddr
+		TINA_I386ASM(jmp _tina_start);
+	#if __GNUC__
+	#elif _MSC_VER
+		}
+	#endif
+
+	#if __GNUC__
+		asm(_TINA_SYMBOL(_tina_swap:));
+	#elif _MSC_VER
+		__declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value){
+	#endif
+		TINA_I386ASM(mov eax, [esp + 0x0C]); // retval
+		TINA_I386ASM(mov ecx, [esp + 0x04]); // sp_from
+		TINA_I386ASM(mov edx, [esp + 0x08]); // sp_to
+		TINA_I386ASM(push ebp);
+		TINA_I386ASM(push ebx);
+		TINA_I386ASM(push esi);
+		TINA_I386ASM(push edi);
+		TINA_I386ASM(mov [ecx], esp);
+		TINA_I386ASM(mov esp, [edx]);
+		TINA_I386ASM(pop edi);
+		TINA_I386ASM(pop esi);
+		TINA_I386ASM(pop ebx);
+		TINA_I386ASM(pop ebp);
+		TINA_I386ASM(ret);
+	#if __GNUC__
+		asm(".att_syntax");
+	#elif _MSC_VER
+		}
+	#endif
+#elif TINA_ABI_SysV_AMD64
+	asm(".intel_syntax noprefix");
+	
+	asm(_TINA_SYMBOL(_tina_init_stack:));
+	asm("  push rbp");
+	asm("  push rbx");
+	asm("  push r12");
+	asm("  push r13");
+	asm("  push r14");
+	asm("  push r15");
+	asm("  mov [rsi], rsp"); // rsi = arg1
+	asm("  and rdx, -16"); // rdx = arg2
+	asm("  mov rsp, rdx");
+	asm("  push 0");
+	asm("  jmp " _TINA_SYMBOL(_tina_start));
+	
+	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
+	asm(_TINA_SYMBOL(_tina_swap:));
+	asm("  push rbp");
+	asm("  push rbx");
+	asm("  push r12");
+	asm("  push r13");
+	asm("  push r14");
+	asm("  push r15");
+	asm("  mov [rdi], rsp"); // rdri = arg0
+	asm("  mov rsp, [rsi]"); // rsi = arg1
+	asm("  pop r15");
+	asm("  pop r14");
+	asm("  pop r13");
+	asm("  pop r12");
+	asm("  pop rbx");
+	asm("  pop rbp");
+	asm("  mov rax, rdx"); // rax = ret, rdx = arg2
+	asm("  ret");
+	
+	asm(".att_syntax");
+#elif TINA_ABI_WIN64
+	// MSVC doesn't allow inline assembly, assemble to binary blob then.
+	
+	#if __GNUC__
+		#define TINA_SECTION_ATTRIBUTE __attribute__((section(".text#")))
+	#elif _MSC_VER
+		#pragma section(".text")
+		#define TINA_SECTION_ATTRIBUTE __declspec(allocate(".text"))
+	#else
+		#error Unknown/untested compiler for Win64. 
+	#endif
+	
+	// Assembled and dumped from win64-init.S
+	TINA_SECTION_ATTRIBUTE
+	const uint64_t _tina_init_stack[] = {
+		0x5541544157565355, 0x2534ff6557415641,
+		0x2534ff6500000008, 0x2534ff6500000010,
+		0xa0ec814800001478, 0x9024b4290f000000,
+		0x8024bc290f000000, 0x2444290f44000000,
+		0x4460244c290f4470, 0x290f44502454290f,
+		0x2464290f4440245c, 0x4420246c290f4430,
+		0x290f44102474290f, 0xe08349228948243c,
+		0x0c894865c4894cf0, 0x8948650000147825,
+		0x4c6500000010250c, 0x6a00000008250c89,
+		0xb8489020ec834800, (uint64_t)_tina_start,
+		0x909090909090e0ff, 0x9090909090909090,
+	};
+
+	// Assembled and dumped from win64-swap.S
+	TINA_SECTION_ATTRIBUTE
+	const uint64_t _tina_swap[] = {
+		0x5541544157565355, 0x2534ff6557415641,
+		0x2534ff6500000008, 0x2534ff6500000010,
+		0xa0ec814800001478, 0x9024b4290f000000,
+		0x8024bc290f000000, 0x2444290f44000000,
+		0x4460244c290f4470, 0x290f44502454290f,
+		0x2464290f4440245c, 0x4420246c290f4430,
+		0x290f44102474290f, 0x228b48218948243c,
+		0x0000009024b4280f, 0x0000008024bc280f,
+		0x0f44702444280f44, 0x54280f4460244c28,
+		0x40245c280f445024, 0x0f44302464280f44,
+		0x74280f4420246c28, 0x48243c280f441024,
+		0x8f65000000a0c481, 0x8f65000014782504,
+		0x8f65000000102504, 0x5f41000000082504,
+		0x5e5f5c415d415e41, 0x9090c3c0894c5d5b,
+	};
+#else
+	#error Unhandled target CPU/ABI/Compiler combination!
 #endif
 
 #endif // TINA_IMPLEMENTATION
