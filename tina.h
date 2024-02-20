@@ -167,8 +167,7 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	return ((init_func*)(void*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
 }
 
-void _tina_context(tina* coro); // Can this be static and still referenced by the inline asm?! 
-void _tina_context(tina* coro){
+static void _tina_start(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
 	void* value = tina_yield(coro, coro);
 	// Call the body function with the first value.
@@ -194,9 +193,9 @@ void* tina_swap(tina* from, tina* to, void* value){
 
 void* tina_resume(tina* coro, void* value){
 	_TINA_ASSERT(!coro->_caller, "Tina Error: tina_resume() called on a coroutine that hasn't yielded yet.");
-	tina dummy = TINA_EMPTY;
-	coro->_caller = &dummy;
-	return tina_swap(&dummy, coro, value);
+	tina this_fiber = TINA_EMPTY;
+	coro->_caller = &this_fiber;
+	return tina_swap(&this_fiber, coro, value);
 }
 
 void* tina_yield(tina* coro, void* value){
@@ -225,15 +224,15 @@ void* tina_yield(tina* coro, void* value){
 	asm("  push {r4-r11, lr}");
 	asm("  vpush {q4-q7}");
 	// Now store the stack pointer in the couroutine.
-	// _tina_context() will call tina_yield() to restore the stack and registers later.
+	// _tina_start() will call tina_yield() to restore the stack and registers later.
 	asm("  str sp, [r2]");
 	// Align the stack top to 16 bytes as requested by the ABI and set it to the stack pointer.
 	asm("  and r3, r3, #~0xF");
 	asm("  mov sp, r3");
-	// Finally, tail call into _tina_context.
-	// By setting the caller to null, debuggers will show _tina_context() as a base stack frame.
+	// Finally, tail call into _tina_start().
+	// By setting the caller to null, debuggers will show _tina_start() as a base stack frame.
 	asm("  mov lr, #0");
-	asm("  b _tina_context");
+	asm("  b _tina_start");
 	
 	// https://static.docs.arm.com/ihi0042/g/aapcs32.pdf
 	// _tina_swap() is responsible for swapping out the registers and stack pointer.
@@ -270,7 +269,7 @@ void* tina_yield(tina* coro, void* value){
 	asm("  and x3, x3, #~0xF");
 	asm("  mov sp, x3");
 	asm("  mov lr, #0");
-	asm("  b " _TINA_SYMBOL(_tina_context));
+	asm("  b " _TINA_SYMBOL(_tina_start));
 
 	asm(_TINA_SYMBOL(_tina_swap:));
 	asm("  sub sp, sp, 0xA0");
@@ -302,11 +301,16 @@ void* tina_yield(tina* coro, void* value){
 	asm("  mov x0, x2");
 	asm("  ret");
 #elif TINA_ABI_i386
-	#define TINA_I386ASM(...) __asm __VA_ARGS__
-	__declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp) {
-		//	asm(".intel_syntax noprefix");
-		//	#define TINA_I386ASM(...) asm(#__VA_ARGS__)
-		//	asm(_TINA_SYMBOL(_tina_init_stack:));
+	#if __GNUC__
+		asm(".intel_syntax noprefix");
+		#define TINA_I386ASM(...) asm(#__VA_ARGS__)
+		asm(_TINA_SYMBOL(_tina_init_stack:));
+	#elif _MSC_VER
+		#define TINA_I386ASM(...) __asm __VA_ARGS__
+		__declspec(naked) tina* _tina_init_stack(tina* coro, tina_func* body, void** sp_loc, void* sp){
+	#else
+		#error Unknown/untested compiler for i386. 
+	#endif
 		TINA_I386ASM(mov eax, [esp + 0x04]); // coro
 		TINA_I386ASM(mov ecx, [esp + 0x0C]); // sp_loc
 		TINA_I386ASM(mov edx, [esp + 0x10]); // sp
@@ -319,11 +323,17 @@ void* tina_yield(tina* coro, void* value){
 		TINA_I386ASM(mov esp, edx);
 		TINA_I386ASM(push eax); // push argument
 		TINA_I386ASM(push 0); // push empty retaddr
-		TINA_I386ASM(jmp _tina_context);
-	}
+		TINA_I386ASM(jmp _tina_start);
+	#if __GNUC__
+	#elif _MSC_VER
+		}
+	#endif
 
-	__declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value) {
-		//asm(_TINA_SYMBOL(_tina_swap:));
+	#if __GNUC__
+		asm(_TINA_SYMBOL(_tina_swap:));
+	#elif _MSC_VER
+		__declspec(naked) void* _tina_swap(void** sp_from, void** sp_to, void* value){
+	#endif
 		TINA_I386ASM(mov eax, [esp + 0x0C]); // retval
 		TINA_I386ASM(mov ecx, [esp + 0x04]); // sp_from
 		TINA_I386ASM(mov edx, [esp + 0x08]); // sp_to
@@ -338,8 +348,11 @@ void* tina_yield(tina* coro, void* value){
 		TINA_I386ASM(pop ebx);
 		TINA_I386ASM(pop ebp);
 		TINA_I386ASM(ret);
-	}
-	//asm(".att_syntax");
+	#if __GNUC__
+		asm(".att_syntax");
+	#elif _MSC_VER
+		}
+	#endif
 #elif TINA_ABI_SysV_AMD64
 	#define ARG0 "rdi"
 	#define ARG1 "rsi"
@@ -360,7 +373,7 @@ void* tina_yield(tina* coro, void* value){
 	asm("  and " ARG3 ", ~0xF");
 	asm("  mov rsp, " ARG3);
 	asm("  push 0");
-	asm("  jmp " _TINA_SYMBOL(_tina_context));
+	asm("  jmp " _TINA_SYMBOL(_tina_start));
 	
 	// https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
 	asm(_TINA_SYMBOL(_tina_swap:));
@@ -406,7 +419,7 @@ void* tina_yield(tina* coro, void* value){
 		0x290f44102474290f, 0xe18349208949243c,
 		0x0c894865cc894cf0, 0x8948650000147825,
 		0x4c6500000010250c, 0x6a00000008250c89,
-		0xb8489020ec834800, (uint64_t)_tina_context,
+		0xb8489020ec834800, (uint64_t)_tina_start,
 		0x909090909090e0ff, 0x9090909090909090,
 	};
 
@@ -429,7 +442,7 @@ void* tina_yield(tina* coro, void* value){
 		0x5e5f5c415d415e41, 0x9090c3c0894c5d5b,
 	};
 #else
-	#error Unhandled target CPU/ABI/Compiler combination!}
+	#error Unhandled target CPU/ABI/Compiler combination!
 #endif
 
 #endif // TINA_IMPLEMENTATION
