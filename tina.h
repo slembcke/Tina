@@ -167,7 +167,10 @@ tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
 	return ((init_func*)(void*)_tina_init_stack)(coro, body, &dummy._stack_pointer, stack_end);
 }
 
-static void _tina_start(tina* coro){
+// Must declare as non-static to make it visible to the asm below.
+void _tina_start(tina* coro);
+
+void _tina_start(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
 	void* value = tina_yield(coro, coro);
 	// Call the body function with the first value.
@@ -318,7 +321,7 @@ void* tina_yield(tina* coro, void* value){
 		TINA_I386ASM(push ebx);
 		TINA_I386ASM(push esi);
 		TINA_I386ASM(push edi);
-		TINA_I386ASM(mov[ecx], esp);
+		TINA_I386ASM(mov [ecx], esp);
 		TINA_I386ASM(and edx, ~0xF);
 		TINA_I386ASM(mov esp, edx);
 		TINA_I386ASM(push eax); // push argument
@@ -341,7 +344,7 @@ void* tina_yield(tina* coro, void* value){
 		TINA_I386ASM(push ebx);
 		TINA_I386ASM(push esi);
 		TINA_I386ASM(push edi);
-		TINA_I386ASM(mov[ecx], esp);
+		TINA_I386ASM(mov [ecx], esp);
 		TINA_I386ASM(mov esp, [edx]);
 		TINA_I386ASM(pop edi);
 		TINA_I386ASM(pop esi);
