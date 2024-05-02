@@ -110,6 +110,10 @@ void* tina_swap(tina* from, tina* to, void* value);
 	#define _TINA_ASSERT(_COND_, _MESSAGE_)
 #endif
 
+#ifndef TINA_WARN_STACK_SIZE
+	#define TINA_WARN_STACK_SIZE 64*1024
+#endif
+
 #if _MSC_VER
 	// Negation of unsigned integers is well defined. Warning is not helpful.
 	#pragma warning(disable: 4146)
@@ -137,7 +141,7 @@ const tina TINA_EMPTY = {
 #endif
 
 tina* tina_init(void* buffer, size_t size, tina_func* body, void* user_data){
-	_TINA_ASSERT(size >= 64*1024, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
+	_TINA_ASSERT(size >= TINA_WARN_STACK_SIZE, "Tina Warning: Small stacks tend to not work on modern OSes. (Feel free to disable this if you have your reasons)");
 #ifndef TINA_NO_CRT
 	if(buffer == NULL) buffer = malloc(size);
 #endif
