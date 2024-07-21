@@ -12,13 +12,14 @@ Fibers are little lightweight user space threading primitives, sometimes called 
 * Fast asm code supporting many common ABIs:
 	* x86 (32 & 64 bit): Windows, Mac, Linux, OpenBSD, FreeBSD, Haiku, etc
 	* ARM (32 & 64 bit): Mac, Linux, iOS, Android, etc
+	* RISCV (64 "GC"): Linux
 	* More platforms (such as consoles) possible with #ifdef tweaks
 * Supports GCC, Clang, and MSVC
 * Minimal asm required to add new ABIs. 32 bit arm is only 15 instructions!
 * Tiny: Currently only ~260 sloc!
 
 ## Limitations:
-* Currently no support for RISC-V, PowerPC, MIPS, m68k, etc.
+* Currently no support for PowerPC, MIPS, m68k, etc.
 * WASM _explicitly_ forbids multiple stacks. Workarounds such as Asyncify are problematic. :(
 * Minimal built-in stack overflow protection: Bring your own memory means bring your own guard pages.
 
