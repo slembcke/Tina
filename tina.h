@@ -266,7 +266,7 @@ void* tina_yield(tina* coro, void* value){
 	// push s0-s11, fs0-fs11
 	asm("_tina_init_stack:");
   asm("  addi sp, sp, -0xD0");
-	asm("  sd  sp, (a2)");
+	asm("  sd  sp, (a1)");
 	asm("  sd  ra,   0xC8(sp)");
 	asm("  sd  s0,   0xC0(sp)");
 	asm("  sd  s1,   0xB8(sp)");
@@ -292,10 +292,10 @@ void* tina_yield(tina* coro, void* value){
 	asm("  fsd fs9,  0x18(sp)");
 	asm("  fsd fs10, 0x10(sp)");
 	asm("  fsd fs11, 0x08(sp)");
-	asm("  andi a3, a3, ~0xF");
-	asm("  mv sp, a3");
+	asm("  andi a2, a2, ~0xF");
+	asm("  mv sp, a2");
 	asm("  mv ra, x0");
-	asm("  tail _tina_context");
+	asm("  tail _tina_start");
 	
 	asm("_tina_swap:");
   asm("  addi sp, sp, -0xD0");
