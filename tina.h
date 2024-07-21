@@ -177,9 +177,7 @@ void _tina_start(tina* coro);
 
 void _tina_start(tina* coro){
 	// Yield back to the _tina_init_stack() call, and return the coroutine.
-		puts("pre-yield");
 	void* value = tina_yield(coro, coro);
-		puts("post-yield");
 	// Call the body function with the first value.
 	value = coro->body(coro, value);
 	// body() has exited, and the coroutine is completed.
@@ -265,7 +263,7 @@ void* tina_yield(tina* coro, void* value){
 	// 64bit riscv w/ 64 bit floats
 	// push s0-s11, fs0-fs11
 	asm("_tina_init_stack:");
-  asm("  addi sp, sp, -0xD0");
+	asm("  addi sp, sp, -0xD0");
 	asm("  sd  sp, (a1)");
 	asm("  sd  ra,   0xC8(sp)");
 	asm("  sd  s0,   0xC0(sp)");
@@ -298,7 +296,7 @@ void* tina_yield(tina* coro, void* value){
 	asm("  tail _tina_start");
 	
 	asm("_tina_swap:");
-  asm("  addi sp, sp, -0xD0");
+	asm("  addi sp, sp, -0xD0");
 	asm("  sd sp, (a0)");
 	asm("  sd  ra,   0xC8(sp)");
 	asm("  sd  s0,   0xC0(sp)");
