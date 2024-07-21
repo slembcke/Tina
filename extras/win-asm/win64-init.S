@@ -54,12 +54,12 @@ _tina_init_stack:
 	movaps [rsp + 0x10], xmm14
 	movaps [rsp + 0x00], xmm15
 
-	mov [ARG2], rsp
-	and ARG3, ~0xF
-	mov rsp, ARG3
+	mov [ARG1], rsp
+	and ARG2, -16
+	mov rsp, ARG2
 	mov gs:0x1478, ARG0
 	mov gs:0x10, ARG0
-	mov gs:0x8, ARG3
+	mov gs:0x8, ARG2
 	
 	// Push stack frame sentinel.
 	push 0
