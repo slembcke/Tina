@@ -357,8 +357,8 @@ void* tina_yield(tina* coro, void* value){
 	asm("  fsd fs10, 0x10(sp)");
 	asm("  fsd fs11, 0x08(sp)");
 	asm("  andi a3, a3, ~0xF");
-	asm("  mv a3, sp");
-	asm("  mv x0, ra");
+	asm("  mv sp, a3");
+	asm("  mv ra, x0");
 	asm("  tail _tina_context");
 	
 	asm("_tina_swap:");
@@ -417,7 +417,7 @@ void* tina_yield(tina* coro, void* value){
 	asm("  fld fs10, 0x10(sp)");
 	asm("  fld fs11, 0x08(sp)");
 	asm("  addi sp, sp, 0xD0");
-	asm("  mv a2, a0");
+	asm("  mv a0, a2");
 	asm("  ret");
 #elif __WIN64__ || _WIN64
 	// MSVC doesn't allow inline assembly, assemble to binary blob then.
