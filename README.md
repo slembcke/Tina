@@ -1,11 +1,11 @@
 ![tina logo](extras/logo.svg)
 
-# Tina
+# 🪡 Tina
 Tina is a teeny tiny, header only, fiber and coroutine library!
 
 Fibers are little lightweight user space threading primitives, sometimes called (stackful) coroutines. They are super handy! OS threads are great if you want to use multiple CPUs, but synchronizing them can be tricky and cumbersome. If you just want to run more than one bit of code at a time, fibers are much easier to use. This makes them great for lightweight uses like implementing state machines directly as code, running a script in a video game to control a cut scene, or amortizing the cost of an long algorithm over time.
 
-## Tina is simple but feature rich!
+## ✂️ Tina is simple but feature rich!
 * Bring your own memory, or let Tina `malloc()` for you.
 * symmetric coroutines: `init()`, `swap()`
 * asymmetric coroutines: `resume()` and `yield()`
@@ -18,15 +18,15 @@ Fibers are little lightweight user space threading primitives, sometimes called 
 * Minimal asm required to add new ABIs. 32 bit arm is only 15 instructions!
 * Tiny: Currently only ~260 sloc!
 
-## Limitations:
+## 🔇 Limitations:
 * Currently no support for PowerPC, MIPS, m68k, etc.
 * WASM _explicitly_ forbids multiple stacks. Workarounds such as Asyncify are problematic. :(
 * Minimal built-in stack overflow protection: Bring your own memory means bring your own guard pages.
 
-# Tina Jobs
+# 🦺 Tina Jobs
 Tina Jobs is a simple fiber based job system built on top of Tina. (Loosely based on the ideas here: https://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine)
 
-## Tina Jobs Features:
+## ⛏️ Tina Jobs Features:
 * Bring your own memory and threading
 * No expensive allocations required at runtime
 * Simple priority model
@@ -38,12 +38,12 @@ Tina Jobs is a simple fiber based job system built on top of Tina. (Loosely base
 * Respectable performance: Though not a primary goal, even a Raspberry Pi can handle millions of jobs/sec!
 * Minimal code footprint: At only ~300 sloc it's easy to modify or extend.
 
-## Limitations:
+## 🪓 Limitations:
 * Not designed for extreme concurrency or throughput 
 	* Single lock per scheduler, doesn't implement work stealing, etc.
 * Maximum job or fiber counts are set at init
 
-# What Are Coroutines Anyway?
+# 🧵 What Are Coroutines Anyway?
 
 Functions are a simple and useful concept in structured programming. You give them some data, they process it, and return some data back to their caller. Coroutines on the other hand _yield_ instead of returning, and can be _resumed_ so they continue right where they left off.
 
