@@ -100,6 +100,12 @@ void* tina_swap(tina* from, tina* to, void* value);
 #define TINA_ABI_SysV_AMD64 (__amd64__ && __GNUC__ && (__unix__ || __APPLE__ || __HAIKU__))
 #define TINA_ABI_WIN64 ((__WIN64__ && __GNUC__) || (_M_AMD64 && _MSC_VER))
 #define TINA_ABI_riscv64gc (__riscv && __riscv_xlen == 64 && __riscv_flen == 64)
+// 沒有浮點擴充 (純RV32I)
+#define TINA_ABI_riscv32i (__riscv && __riscv_xlen == 32 && !__riscv_flen)
+// 單精度浮點 (RV32F)
+#define TINA_ABI_riscv32f (__riscv && __riscv_xlen == 32 && __riscv_flen == 32)
+// 雙精度浮點 (RV32D)
+#define TINA_ABI_riscv32d (__riscv && __riscv_xlen == 32 && __riscv_flen == 64)
 
 #ifndef TINA_NO_CRT
 	#include <stdlib.h>
@@ -537,6 +543,278 @@ void* tina_yield(tina* coro, void* value){
 		0x8f65000000102504, 0x5f41000000082504,
 		0x5e5f5c415d415e41, 0x9090c3c0894c5d5b,
 	};
+	
+#elif TINA_ABI_riscv32d
+    // 32-bit CPU + Double-Precision FPU (RV32D)
+    asm("_tina_init_stack:");
+    asm("  addi sp, sp, -0x9C");         // Allocate stack space
+    asm("  sw  sp, (a1)");               // Save stack pointer
+
+    // Save general-purpose registers (ra, s0-s11)
+    asm("  sw  ra,   0x98(sp)");         // Save return address
+    asm("  sw  s0,   0x94(sp)");         // Save s0
+    asm("  sw  s1,   0x90(sp)");         // Save s1
+    asm("  sw  s2,   0x8C(sp)");         // Save s2
+    asm("  sw  s3,   0x88(sp)");         // Save s3
+    asm("  sw  s4,   0x84(sp)");         // Save s4
+    asm("  sw  s5,   0x80(sp)");         // Save s5
+    asm("  sw  s6,   0x7C(sp)");         // Save s6
+    asm("  sw  s7,   0x78(sp)");         // Save s7
+    asm("  sw  s8,   0x74(sp)");         // Save s8
+    asm("  sw  s9,   0x70(sp)");         // Save s9
+    asm("  sw  s10,  0x6C(sp)");         // Save s10
+    asm("  sw  s11,  0x68(sp)");         // Save s11
+
+    // Save double-precision floating-point registers (fs0-fs11)
+    asm("  fsd fs0,  0x60(sp)");         // Save fs0
+    asm("  fsd fs1,  0x58(sp)");         // Save fs1
+    asm("  fsd fs2,  0x50(sp)");         // Save fs2
+    asm("  fsd fs3,  0x48(sp)");         // Save fs3
+    asm("  fsd fs4,  0x40(sp)");         // Save fs4
+    asm("  fsd fs5,  0x38(sp)");         // Save fs5
+    asm("  fsd fs6,  0x30(sp)");         // Save fs6
+    asm("  fsd fs7,  0x28(sp)");         // Save fs7
+    asm("  fsd fs8,  0x20(sp)");         // Save fs8
+    asm("  fsd fs9,  0x18(sp)");         // Save fs9
+    asm("  fsd fs10, 0x10(sp)");         // Save fs10
+    asm("  fsd fs11, 0x08(sp)");         // Save fs11
+
+    asm("  andi a2, a2, ~0xF");          // Align stack
+    asm("  mv sp, a2");                  // Set stack pointer
+    asm("  mv ra, x0");                  // Clear return address
+    asm("  tail _tina_start");           // Jump to coroutine start
+
+    asm("_tina_swap:");
+    asm("  addi sp, sp, -0x9C");         // Allocate stack space
+    asm("  sw sp, (a0)");                // Save stack pointer
+
+    // Save general-purpose registers
+    asm("  sw  ra,   0x98(sp)");
+    asm("  sw  s0,   0x94(sp)");
+    asm("  sw  s1,   0x90(sp)");
+    asm("  sw  s2,   0x8C(sp)");
+    asm("  sw  s3,   0x88(sp)");
+    asm("  sw  s4,   0x84(sp)");
+    asm("  sw  s5,   0x80(sp)");
+    asm("  sw  s6,   0x7C(sp)");
+    asm("  sw  s7,   0x78(sp)");
+    asm("  sw  s8,   0x74(sp)");
+    asm("  sw  s9,   0x70(sp)");
+    asm("  sw  s10,  0x6C(sp)");
+    asm("  sw  s11,  0x68(sp)");
+
+    // Save double-precision floating-point registers
+    asm("  fsd fs0,  0x60(sp)");
+    asm("  fsd fs1,  0x58(sp)");
+    asm("  fsd fs2,  0x50(sp)");
+    asm("  fsd fs3,  0x48(sp)");
+    asm("  fsd fs4,  0x40(sp)");
+    asm("  fsd fs5,  0x38(sp)");
+    asm("  fsd fs6,  0x30(sp)");
+    asm("  fsd fs7,  0x28(sp)");
+    asm("  fsd fs8,  0x20(sp)");
+    asm("  fsd fs9,  0x18(sp)");
+    asm("  fsd fs10, 0x10(sp)");
+    asm("  fsd fs11, 0x08(sp)");
+
+    asm("  lw sp, (a1)");                // Restore stack pointer
+
+    // Restore general-purpose registers
+    asm("  lw  ra,   0x98(sp)");
+    asm("  lw  s0,   0x94(sp)");
+    asm("  lw  s1,   0x90(sp)");
+    asm("  lw  s2,   0x8C(sp)");
+    asm("  lw  s3,   0x88(sp)");
+    asm("  lw  s4,   0x84(sp)");
+    asm("  lw  s5,   0x80(sp)");
+    asm("  lw  s6,   0x7C(sp)");
+    asm("  lw  s7,   0x78(sp)");
+    asm("  lw  s8,   0x74(sp)");
+    asm("  lw  s9,   0x70(sp)");
+    asm("  lw  s10,  0x6C(sp)");
+    asm("  lw  s11,  0x68(sp)");
+
+    // Restore double-precision floating-point registers
+    asm("  fld fs0,  0x60(sp)");
+    asm("  fld fs1,  0x58(sp)");
+    asm("  fld fs2,  0x50(sp)");
+    asm("  fld fs3,  0x48(sp)");
+    asm("  fld fs4,  0x40(sp)");
+    asm("  fld fs5,  0x38(sp)");
+    asm("  fld fs6,  0x30(sp)");
+    asm("  fld fs7,  0x28(sp)");
+    asm("  fld fs8,  0x20(sp)");
+    asm("  fld fs9,  0x18(sp)");
+    asm("  fld fs10, 0x10(sp)");
+    asm("  fld fs11, 0x08(sp)");
+
+    asm("  addi sp, sp, 0x9C");          // Deallocate stack space
+    asm("  mv a0, a2");                  // Set return value
+    asm("  ret");                        // Return to caller
+
+#elif TINA_ABI_riscv32f
+    // 32-bit CPU + Single-Precision FPU (RV32F)
+    asm("_tina_init_stack:");
+    asm("  addi sp, sp, -0x68");       // Allocate stack space
+    asm("  sw  sp, (a1)");            // Save stack pointer
+
+    // Save general-purpose registers (ra, s0-s11)
+    asm("  sw   ra,   0x64(sp)");   
+    asm("  sw   s0,   0x60(sp)");    
+    asm("  sw   s1,   0x5C(sp)");  
+    asm("  sw   s2,   0x58(sp)");     
+    asm("  sw   s3,   0x54(sp)");   
+    asm("  sw   s4,   0x50(sp)");    
+    asm("  sw   s5,   0x4C(sp)");     
+    asm("  sw   s6,   0x48(sp)");   
+    asm("  sw   s7,   0x44(sp)");    
+    asm("  sw   s8,   0x40(sp)");  
+    asm("  sw   s9,   0x3C(sp)");     
+    asm("  sw   s10,  0x38(sp)");    
+    asm("  sw   s11,  0x34(sp)");    
+
+    // Save single-precision floating-point registers (fs0-fs11)
+    asm("  fsw  fs0,  0x30(sp)");
+    asm("  fsw  fs1,  0x2C(sp)");
+    asm("  fsw  fs2,  0x28(sp)");
+    asm("  fsw  fs3,  0x24(sp)");
+    asm("  fsw  fs4,  0x20(sp)");
+    asm("  fsw  fs5,  0x1C(sp)");
+    asm("  fsw  fs6,  0x18(sp)");
+    asm("  fsw  fs7,  0x14(sp)");
+    asm("  fsw  fs8,  0x10(sp)");
+    asm("  fsw  fs9,  0x0C(sp)");
+    asm("  fsw  fs10, 0x08(sp)");
+    asm("  fsw  fs11, 0x04(sp)");
+
+    asm("  andi a2, a2, ~0xF");       // Align stack
+    asm("  mv sp, a2");               // Set stack pointer
+    asm("  mv ra, x0");               // Clear return address
+    asm("  tail _tina_start");        // Jump to coroutine start
+
+    asm("_tina_swap:");
+    asm("  addi sp, sp, -0x68");      // Allocate stack space
+    asm("  sw sp, (a0)");             // Save stack pointer
+
+    // Save general-purpose registers
+    asm("  sw   ra,   0x64(sp)");
+    asm("  sw   s0,   0x60(sp)");
+    asm("  sw   s1,   0x5C(sp)");
+    asm("  sw   s2,   0x58(sp)");
+    asm("  sw   s3,   0x54(sp)");
+    asm("  sw   s4,   0x50(sp)");
+    asm("  sw   s5,   0x4C(sp)");
+    asm("  sw   s6,   0x48(sp)");
+    asm("  sw   s7,   0x44(sp)");
+    asm("  sw   s8,   0x40(sp)");
+    asm("  sw   s9,   0x3C(sp)");
+    asm("  sw   s10,  0x38(sp)");
+    asm("  sw   s11,  0x34(sp)");
+
+    // Save single-precision floating-point registers
+    asm("  fsw  fs0,  0x30(sp)");
+    asm("  fsw  fs1,  0x2C(sp)");
+    asm("  fsw  fs2,  0x28(sp)");
+    asm("  fsw  fs3,  0x24(sp)");
+    asm("  fsw  fs4,  0x20(sp)");
+    asm("  fsw  fs5,  0x1C(sp)");
+    asm("  fsw  fs6,  0x18(sp)");
+    asm("  fsw  fs7,  0x14(sp)");
+    asm("  fsw  fs8,  0x10(sp)");
+    asm("  fsw  fs9,  0x0C(sp)");
+    asm("  fsw  fs10, 0x08(sp)");
+    asm("  fsw  fs11, 0x04(sp)");
+
+    asm("  lw sp, (a1)");             // Restore stack pointer
+
+    // Restore general-purpose registers
+    asm("  lw   ra,   0x64(sp)");
+    asm("  lw   s0,   0x60(sp)");
+    asm("  lw   s1,   0x5C(sp)");
+    asm("  lw   s2,   0x58(sp)");
+    asm("  lw   s3,   0x54(sp)");
+    asm("  lw   s4,   0x50(sp)");
+    asm("  lw   s5,   0x4C(sp)");
+    asm("  lw   s6,   0x48(sp)");
+    asm("  lw   s7,   0x44(sp)");
+    asm("  lw   s8,   0x40(sp)");
+    asm("  lw   s9,   0x3C(sp)");
+    asm("  lw   s10,  0x38(sp)");
+    asm("  lw   s11,  0x34(sp)");
+
+    // Restore single-precision floating-point registers
+    asm("  flw  fs0,  0x30(sp)");
+    asm("  flw  fs1,  0x2C(sp)");
+    asm("  flw  fs2,  0x28(sp)");
+    asm("  flw  fs3,  0x24(sp)");
+    asm("  flw  fs4,  0x20(sp)");
+    asm("  flw  fs5,  0x1C(sp)");
+    asm("  flw  fs6,  0x18(sp)");
+    asm("  flw  fs7,  0x14(sp)");
+    asm("  flw  fs8,  0x10(sp)");
+    asm("  flw  fs9,  0x0C(sp)");
+    asm("  flw  fs10, 0x08(sp)");
+    asm("  flw  fs11, 0x04(sp)");
+
+    asm("  addi sp, sp, 0x68");       // Deallocate stack space
+    asm("  mv a0, a2");               // Set return value
+    asm("  ret");                     // Return to caller
+
+#elif TINA_ABI_riscv32i
+    asm("_tina_init_stack:");
+    asm("  addi sp, sp, -0x38");         // Allocate stack space
+    asm("  sw sp, (a1)");                // Save stack pointer
+    asm("  sw ra,   0x34(sp)");          // Save return address
+    asm("  sw s0,   0x30(sp)");          // Save s0
+    asm("  sw s1,   0x2C(sp)");          // Save s1
+    asm("  sw s2,   0x28(sp)");          // Save s2
+    asm("  sw s3,   0x24(sp)");          // Save s3
+    asm("  sw s4,   0x20(sp)");          // Save s4
+    asm("  sw s5,   0x1C(sp)");          // Save s5
+    asm("  sw s6,   0x18(sp)");          // Save s6
+    asm("  sw s7,   0x14(sp)");          // Save s7
+    asm("  sw s8,   0x10(sp)");          // Save s8
+    asm("  sw s9,   0x0C(sp)");          // Save s9
+    asm("  sw s10,  0x08(sp)");          // Save s10
+    asm("  sw s11,  0x04(sp)");          // Save s11
+    asm("  andi a2, a2, ~0xF");          // Align stack
+    asm("  mv sp, a2");
+    asm("  mv ra, x0");
+    asm("  tail _tina_start");
+
+    asm("_tina_swap:");
+    asm("  addi sp, sp, -0x38");         // Allocate stack space
+    asm("  sw sp, (a0)");                // Save stack pointer
+    asm("  sw ra,   0x34(sp)");          // Save return address
+    asm("  sw s0,   0x30(sp)");          // Save s0
+    asm("  sw s1,   0x2C(sp)");          // Save s1
+    asm("  sw s2,   0x28(sp)");          // Save s2
+    asm("  sw s3,   0x24(sp)");          // Save s3
+    asm("  sw s4,   0x20(sp)");          // Save s4
+    asm("  sw s5,   0x1C(sp)");          // Save s5
+    asm("  sw s6,   0x18(sp)");          // Save s6
+    asm("  sw s7,   0x14(sp)");          // Save s7
+    asm("  sw s8,   0x10(sp)");          // Save s8
+    asm("  sw s9,   0x0C(sp)");          // Save s9
+    asm("  sw s10,  0x08(sp)");          // Save s10
+    asm("  sw s11,  0x04(sp)");          // Save s11
+    asm("  lw sp, (a1)");                // Restore stack pointer
+    asm("  lw ra,   0x34(sp)");          // Restore return address
+    asm("  lw s0,   0x30(sp)");          // Restore s0
+    asm("  lw s1,   0x2C(sp)");          // Restore s1
+    asm("  lw s2,   0x28(sp)");          // Restore s2
+    asm("  lw s3,   0x24(sp)");          // Restore s3
+    asm("  lw s4,   0x20(sp)");          // Restore s4
+    asm("  lw s5,   0x1C(sp)");          // Restore s5
+    asm("  lw s6,   0x18(sp)");          // Restore s6
+    asm("  lw s7,   0x14(sp)");          // Restore s7
+    asm("  lw s8,   0x10(sp)");          // Restore s8
+    asm("  lw s9,   0x0C(sp)");          // Restore s9
+    asm("  lw s10,  0x08(sp)");          // Restore s10
+    asm("  lw s11,  0x04(sp)");          // Restore s11
+    asm("  addi sp, sp, 0x38");          // Deallocate stack space
+    asm("  mv a0, a2");                  // Set return value to a2
+    asm("  ret");                        // Return
 #else
 	#error Unhandled target CPU/ABI/Compiler combination!
 #endif
