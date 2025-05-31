@@ -12,11 +12,13 @@ Fibers are little lightweight user space threading primitives, sometimes called 
 * Fast asm code supporting many common ABIs and environments:
 	* x86 (32 & 64 bit): Windows, Mac, Linux, OpenBSD, FreeBSD, Haiku, etc
 	* ARM (32 & 64 bit): Mac, Linux, iOS, Android, microcontrollers, etc
-	* RISCV (RV64GC, RV32): Linux, microcontrollers, etc
-	* More platforms (such as consoles) should be possible with #ifdef tweaks
+	* RISCV (RV64GC, RV32[IFD]): Linux, microcontrollers, etc
+   		* Special thanks to [HSW](https://github.com/28530367) for the 32 bit variants!
+	* More platforms (such as consoles) should work with `#ifdef` tweaks
 * Supports GCC, Clang, and MSVC
 * Minimal asm required to add new ABIs. 32 bit arm is only [https://github.com/slembcke/Tina/blob/2cf0ff6ac7e1275649c90766ecd42d56aac9ebf9/tina.h#L236](15 instructions)!
-* Tiny: Currently only ~260 sloc! (Hah! Ok, it used to be, but supporting various RISCV variants tripled that! Special thanks to @28530367 for the 32 bit variants.)
+* Tiny: Currently only ~650 sloc!
+	* Over half of that is RISCV variants, but what can you do? 😄
 
 ## 🔇 Limitations:
 * Currently no support for PowerPC, MIPS, m68k, etc.
