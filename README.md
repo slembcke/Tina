@@ -16,7 +16,7 @@ Fibers are little lightweight user space threading primitives, sometimes called 
    		* Special thanks to [HSW](https://github.com/28530367) for the 32 bit variants!
 	* More platforms (such as consoles) should work with `#ifdef` tweaks
 * Supports GCC, Clang, and MSVC
-* Minimal asm required to add new ABIs. 32 bit arm is only [https://github.com/slembcke/Tina/blob/2cf0ff6ac7e1275649c90766ecd42d56aac9ebf9/tina.h#L236](15 instructions)!
+* Minimal asm required to add new ABIs. 32 bit arm is only [15 instructions](https://github.com/slembcke/Tina/blob/2cf0ff6ac7e1275649c90766ecd42d56aac9ebf9/tina.h#L236)!
 * Tiny: Currently only ~650 sloc!
 	* Over half of that is RISCV variants, but what can you do? 😄
 
